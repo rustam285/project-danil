@@ -31,15 +31,15 @@ android {
 
     signingConfigs {
         create("release") {
-            val storeFilePath = keystoreProps.getProperty("storeFile")
-                ?: System.getenv("KEYSTORE_FILE")
+            val storeFilePath = keystoreProps.getProperty("storeFile")?.takeIf { it.isNotBlank() }
+                ?: System.getenv("KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
             if (storeFilePath != null) {
                 storeFile = file(storeFilePath)
-                storePassword = keystoreProps.getProperty("storePassword")
+                storePassword = keystoreProps.getProperty("storePassword")?.takeIf { it.isNotBlank() }
                     ?: System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyAlias = keystoreProps.getProperty("keyAlias")?.takeIf { it.isNotBlank() }
                     ?: System.getenv("KEY_ALIAS")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+                keyPassword = keystoreProps.getProperty("keyPassword")?.takeIf { it.isNotBlank() }
                     ?: System.getenv("KEY_PASSWORD")
             }
         }
@@ -51,7 +51,7 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             val hasKeystore = keystorePropsFile.exists() ||
-                (System.getenv("KEYSTORE_FILE") != null)
+                !System.getenv("KEYSTORE_FILE").isNullOrBlank()
             if (hasKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
