@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -331,7 +332,8 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
     var showCameraRationale by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<Uri?>(null) }
 
-    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    // PickVisualMedia (системный фото-пикер) надёжнее OEM-реализаций GetContent на Xiaomi/HyperOS
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let { vm.takePhoto(context, it) }
     }
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -366,7 +368,9 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
                             permissionLauncher.launch(Manifest.permission.CAMERA)
                         }
                     }) { Text("Камера") }
-                    OutlinedButton(onClick = { galleryLauncher.launch("image/*") }) { Text("Галерея") }
+                    OutlinedButton(onClick = {
+                        galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }) { Text("Галерея") }
                 }
             } else {
                 AsyncImage(

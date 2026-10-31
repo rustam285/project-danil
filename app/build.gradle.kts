@@ -25,7 +25,7 @@ android {
         targetSdk = 35
         // versionCode растёт автоматически: VERSION_CODE из CI (номер тега/запуска, п. 12.3)
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "1.1.1"
+        versionName = "1.1.2"
         vectorDrawables.useSupportLibrary = true
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
