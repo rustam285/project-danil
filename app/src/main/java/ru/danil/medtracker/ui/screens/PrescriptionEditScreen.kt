@@ -177,7 +177,7 @@ fun PrescriptionEditScreen(
     onCancel: () -> Unit,
 ) {
     val vm = appViewModel { PrescriptionEditViewModel(it) }
-    val drugs by vm.drugs.collectAsStateWithLifecycle()
+    val drugs by vm.drugs.collectAsStateWithLifecycle(initialValue = emptyList())
     val duplicateWarning by vm.duplicateWarning.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
@@ -288,7 +288,7 @@ fun PrescriptionEditScreen(
                 }
             }
 
-            (localError ?: error.value)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+            (localError ?: error)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
 
             Button(
                 onClick = {

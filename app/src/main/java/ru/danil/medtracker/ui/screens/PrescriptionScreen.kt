@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material3.AlertDialog
@@ -42,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.danil.medtracker.calc.CalcService
 import ru.danil.medtracker.calc.SupplyEngine
@@ -276,10 +278,11 @@ fun PrescriptionScreen(
                                 )
                                 Text(
                                     "${issue.totalPieces} шт" +
-                                        (if (!issue.isInitialBalance && issue.enteredPacks > 0 && issue.piecesPerPackAtIssue > 1)
-                                            " (${issue.enteredPacks} уп × ${issue.piecesPerPackAtIssue}" +
-                                                (if (issue.enteredPieces > 0) " + ${issue.enteredPieces}") + ")"
-                                        else ""),
+                                        (if (!issue.isInitialBalance && issue.enteredPacks > 0 && issue.piecesPerPackAtIssue > 1) {
+                                            var q = " (${issue.enteredPacks} уп × ${issue.piecesPerPackAtIssue}"
+                                            if (issue.enteredPieces > 0) q += " + ${issue.enteredPieces}"
+                                            q + ")"
+                                        } else ""),
                                 )
                             }
                             row.gapClosed?.let { (from, to) ->

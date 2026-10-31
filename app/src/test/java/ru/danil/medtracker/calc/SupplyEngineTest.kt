@@ -176,12 +176,12 @@ class SupplyEngineTest {
         assertEquals(d("2026-11-01"), (res.outcome as SupplyOutcome.UntilDate).date)
     }
 
-    /** Начальный остаток по дате: piecesNeeded на Б1-сценарий = ровно 274 шт, covered = введённая дата. */
+    /** Начальный остаток по дате: piecesNeeded на Б1-сценарий = ровно 10 шт (29/30 + 9 мес + 1/30), covered = введённая дата. */
     @Test
     fun initialBalanceByDate_piecesNeededExact() {
         val norms = listOf(NormRec(validFrom = d("2026-01-01"), pieceKind = PieceKind.PER_MONTH, pieceAmount = 1))
         val need = SupplyEngine.piecesNeeded(d("2026-11-02"), d("2027-09-01"), norms, null)
-        assertEquals(274L, need)
+        assertEquals(10L, need)
         val res = SupplyEngine.supplyEnd(
             listOf(StockEvent(date = d("2026-11-01"), totalPieces = need.toInt(), isInitialBalance = true)),
             norms, null,

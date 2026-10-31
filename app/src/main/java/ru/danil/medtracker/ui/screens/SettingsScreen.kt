@@ -159,7 +159,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 fun SettingsScreen() {
     val vm = appViewModel { SettingsViewModel(it) }
     val context = LocalContext.current
-    val settings by vm.settings.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     val busy by vm.busy.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val backups by vm.backups.collectAsStateWithLifecycle()

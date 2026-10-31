@@ -42,7 +42,9 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import ru.danil.medtracker.calc.CalcService
 import ru.danil.medtracker.calc.Level
 import ru.danil.medtracker.data.AppContainer
@@ -56,7 +58,8 @@ import java.time.LocalDate
 class PatientsViewModel(container: AppContainer) : ViewModel() {
     private val repo = container.repo
 
-    val threshold = combine(container.settings.settings) { it.drugThresholdDays }
+    val threshold = container.settings.settings
+        .map { it.drugThresholdDays }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 7)
 
     /** Список с ближайшими датами; пересчитывается при любом изменении данных (п. 11.2). */

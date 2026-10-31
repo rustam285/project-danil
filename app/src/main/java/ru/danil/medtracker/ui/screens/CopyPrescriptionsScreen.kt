@@ -53,7 +53,7 @@ fun CopyPrescriptionsScreen(
     onDone: () -> Unit,
 ) {
     val vm = appViewModel { CopyPrescriptionsViewModel(it) }
-    val sources by vm.sources.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle(initialValue = emptyList())
     val done by vm.done.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(done) { if (done) onDone() }
 
