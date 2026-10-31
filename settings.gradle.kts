@@ -16,6 +16,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Tesseract4Android публикуется на JitPack (в Maven Central его нет)
+        maven("https://jitpack.io")
     }
 }
 
