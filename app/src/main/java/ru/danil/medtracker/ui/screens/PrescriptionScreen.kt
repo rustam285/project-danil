@@ -117,7 +117,7 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
                 // Журнал: дата на момент каждой выдачи (п. 4.6)
                 val events = CalcService.stockEvents(issuesList)
                 val normRecs = CalcService.normRecs(ns)
-                val journal = is.reversed().map { issue ->
+                val journal = issuesList.reversed().map { issue ->
                     val res = SupplyEngine.supplyEndAsOf(events.first { e -> e.id == issue.id }, events, normRecs, drug.mePerPiece())
                     val gap = res.gaps.lastOrNull()
                     JournalRow(
@@ -133,7 +133,7 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
                     p?.patientId ?: 0, supply.gaps.map { Dates.toEpochDay(it.first) to Dates.toEpochDay(it.second) },
                 )
             }
-            val journal = is.reversed().map { issue ->
+            val journal = issuesList.reversed().map { issue ->
                 JournalRow(issue, null, false, null)
             }
             State(p, drug, ns, issuesList, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList())

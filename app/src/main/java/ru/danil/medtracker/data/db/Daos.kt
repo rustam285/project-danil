@@ -200,7 +200,7 @@ interface TombstoneDao {
     suspend fun insert(t: Tombstone): Long
 
     @Query("SELECT * FROM tombstones WHERE deletedAt > :since ORDER BY deletedAt")
-    suspend fun since(deletedAt: Long): List<Tombstone>
+    suspend fun since(since: Long): List<Tombstone>
 
     @Query("SELECT * FROM tombstones")
     suspend fun all(): List<Tombstone>

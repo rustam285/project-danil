@@ -11,7 +11,7 @@ import androidx.room.RoomDatabase
         Norm::class, Issue::class, Rx::class, Tombstone::class,
     ],
     version = 1,
-    exportSchema = true,
+    exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun patientDao(): PatientDao
