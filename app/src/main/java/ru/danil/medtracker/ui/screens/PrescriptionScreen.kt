@@ -97,7 +97,7 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
         withContext(Dispatchers.Default) {
             val p = prescriptions.firstOrNull { it.id == prescriptionId }
             val ns = norms.filter { it.prescriptionId == prescriptionId }.sortedBy { it.validFrom }
-            val is = issues.filter { it.prescriptionId == prescriptionId }.sortedWith(compareBy({ it.date }, { it.id }))
+            val issuesList = issues.filter { it.prescriptionId == prescriptionId }.sortedWith(compareBy({ it.date }, { it.id }))
             val drug = p?.let { drugs.firstOrNull { d -> d.id == it.drugId } }
             val today = Dates.today()
             val noCalc = CalcService.isNoCalc(ns, today)
@@ -106,16 +106,16 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
             var remainder = ""
             var remainderPacks: String? = null
             if (!noCalc && drug != null) {
-                val supply = CalcService.supplyFor(is, ns, drug)
+                val supply = CalcService.supplyFor(issuesList, ns, drug)
                 covered = supply.coveredUntil()
                 unlimited = supply.outcome is SupplyOutcome.Unlimited
-                val rem = SupplyEngine.remainderAt(today, CalcService.stockEvents(is), CalcService.normRecs(ns), drug.mePerPiece())
+                val rem = SupplyEngine.remainderAt(today, CalcService.stockEvents(issuesList), CalcService.normRecs(ns), drug.mePerPiece())
                 remainder = rem.toDisplay()
                 if (drug.piecesPerPack > 1) {
                     remainderPacks = rem.div(ru.danil.medtracker.calc.Rational.of(drug.piecesPerPack.toLong())).toDisplay()
                 }
                 // Журнал: дата на момент каждой выдачи (п. 4.6)
-                val events = CalcService.stockEvents(is)
+                val events = CalcService.stockEvents(issuesList)
                 val normRecs = CalcService.normRecs(ns)
                 val journal = is.reversed().map { issue ->
                     val res = SupplyEngine.supplyEndAsOf(events.first { e -> e.id == issue.id }, events, normRecs, drug.mePerPiece())
@@ -128,7 +128,7 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
                 return@withContext State(
-                    p, drug, ns, is, journal, covered, unlimited, noCalc,
+                    p, drug, ns, issuesList, journal, covered, unlimited, noCalc,
                     remainder, remainderPacks, settings.drugThresholdDays,
                     p?.patientId ?: 0, supply.gaps.map { Dates.toEpochDay(it.first) to Dates.toEpochDay(it.second) },
                 )
@@ -136,7 +136,7 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
             val journal = is.reversed().map { issue ->
                 JournalRow(issue, null, false, null)
             }
-            State(p, drug, ns, is, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList())
+            State(p, drug, ns, issuesList, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList())
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), State())
 

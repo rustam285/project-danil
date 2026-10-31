@@ -37,14 +37,15 @@ data class PatientListItem(
 )
 
 /** Строка вкладки «Срочное» (п. 5.2). */
+enum class UrgentKind { ENDED, LOW, RX }
+
 data class UrgentItem(
     val patient: Patient,
     val drug: Drug?,
     val prescription: Prescription?,
     val rx: Rx?,
     val date: LocalDate?,
-    val kind: Kind,
-    enum class Kind { ENDED, LOW, RX }
+    val kind: UrgentKind,
 )
 
 class Repo(
@@ -198,18 +199,18 @@ class Repo(
         return prescriptions.mapNotNull { p ->
             val drug = drugs[p.drugId] ?: return@mapNotNull null
             val ns = norms[p.id].orEmpty().sortedBy { it.validFrom }
-            val is = issues[p.id].orEmpty()
+            val issuesList = issues[p.id].orEmpty()
             val noCalc = CalcService.isNoCalc(ns, today)
             val supply = if (noCalc) {
                 SupplyResult(SupplyOutcome.NoEvents)
             } else {
-                CalcService.supplyFor(is, ns, drug)
+                CalcService.supplyFor(issuesList, ns, drug)
             }
             val remainder = if (noCalc) ru.danil.medtracker.calc.Rational.ZERO else
                 ru.danil.medtracker.calc.SupplyEngine.remainderAt(
-                    today, CalcService.stockEvents(is), CalcService.normRecs(ns), drug.mePerPiece(),
+                    today, CalcService.stockEvents(issuesList), CalcService.normRecs(ns), drug.mePerPiece(),
                 )
-            PrescriptionView(p, drug, ns, is, supply, noCalc, remainder)
+            PrescriptionView(p, drug, ns, issuesList, supply, noCalc, remainder)
         }
     }
 }

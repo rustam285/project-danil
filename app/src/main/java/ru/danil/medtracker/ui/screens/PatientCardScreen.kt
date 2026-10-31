@@ -98,13 +98,13 @@ class PatientCardViewModel(private val container: AppContainer) : ViewModel() {
             val views = prescriptions.mapNotNull { pr ->
                 val drug = drugById[pr.drugId] ?: return@mapNotNull null
                 val ns = normsByP[pr.id].orEmpty().sortedBy { it.validFrom }
-                val is = issuesByP[pr.id].orEmpty().sortedBy { it.date }
+                val issuesList = issuesByP[pr.id].orEmpty().sortedBy { it.date }
                 val noCalc = CalcService.isNoCalc(ns, today)
                 val supply = if (noCalc) ru.danil.medtracker.calc.SupplyResult(ru.danil.medtracker.calc.SupplyOutcome.NoEvents)
-                else CalcService.supplyFor(is, ns, drug)
+                else CalcService.supplyFor(issuesList, ns, drug)
                 val remainder = if (noCalc) ru.danil.medtracker.calc.Rational.ZERO
-                else ru.danil.medtracker.calc.SupplyEngine.remainderAt(today, CalcService.stockEvents(is), CalcService.normRecs(ns), drug.mePerPiece())
-                PrescriptionView(pr, drug, ns, is, supply, noCalc, remainder)
+                else ru.danil.medtracker.calc.SupplyEngine.remainderAt(today, CalcService.stockEvents(issuesList), CalcService.normRecs(ns), drug.mePerPiece())
+                PrescriptionView(pr, drug, ns, issuesList, supply, noCalc, remainder)
             }.sortedBy { it.drug.name.lowercase() }
             State(
                 patient = patients.firstOrNull { it.id == patientId },
@@ -140,11 +140,11 @@ class PatientCardViewModel(private val container: AppContainer) : ViewModel() {
         val views = prescriptions.mapNotNull { pr ->
             val drug = drugById[pr.drugId] ?: return@mapNotNull null
             val ns = normsByP[pr.id].orEmpty().sortedBy { it.validFrom }
-            val is = issuesByP[pr.id].orEmpty().sortedBy { it.date }
+            val issuesList = issuesByP[pr.id].orEmpty().sortedBy { it.date }
             val noCalc = CalcService.isNoCalc(ns)
             val supply = if (noCalc) ru.danil.medtracker.calc.SupplyResult(ru.danil.medtracker.calc.SupplyOutcome.NoEvents)
-            else CalcService.supplyFor(is, ns, drug)
-            PrescriptionView(pr, drug, ns, is, supply, noCalc, ru.danil.medtracker.calc.Rational.ZERO)
+            else CalcService.supplyFor(issuesList, ns, drug)
+            PrescriptionView(pr, drug, ns, issuesList, supply, noCalc, ru.danil.medtracker.calc.Rational.ZERO)
         }
         val bytes = withContext(Dispatchers.Default) { PlanDnDoc.build(patient, views) }
         val dir = java.io.File(context.cacheDir, "docs").apply { mkdirs() }

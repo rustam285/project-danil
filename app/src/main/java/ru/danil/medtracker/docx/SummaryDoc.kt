@@ -72,13 +72,13 @@ object SummaryDoc {
             }
 
             // Осталось на начало периода (п. 4.2.7)
-            val is = issuesByP[p.id].orEmpty()
+            val issuesList = issuesByP[p.id].orEmpty()
             row.remainder += SupplyEngine.remainderAt(
-                periodStart, CalcService.stockEvents(is), CalcService.normRecs(norms), drug.mePerPiece(),
+                periodStart, CalcService.stockEvents(issuesList), CalcService.normRecs(norms), drug.mePerPiece(),
             )
 
             // У кого заканчивается и когда: до конца периода
-            val supply = CalcService.supplyFor(is, norms, drug)
+            val supply = CalcService.supplyFor(issuesList, norms, drug)
             val until = supply.coveredUntil()
             if (supply.outcome is ru.danil.medtracker.calc.SupplyOutcome.Unlimited || until == null) continue
             if (!until.isAfter(periodEnd)) {

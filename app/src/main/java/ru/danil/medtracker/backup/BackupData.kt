@@ -12,7 +12,7 @@ import ru.danil.medtracker.data.db.Tombstone
 
 /**
  * Формат копий (п. 9.6, 9.7). JSON человекочитаем; базу можно прочитать без приложения.
- * Контейнер — ZIP: manifest.json + db.json + photos/*.
+ * Контейнер — ZIP: manifest.json + db.json + каталог photos с фото рецептов.
  */
 @Serializable
 data class BackupManifest(

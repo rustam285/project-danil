@@ -34,6 +34,7 @@ import ru.danil.medtracker.calc.CalcService
 import ru.danil.medtracker.calc.SupplyOutcome
 import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.UrgentItem
+import ru.danil.medtracker.data.UrgentKind
 import ru.danil.medtracker.ui.EmptyState
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
@@ -98,7 +99,7 @@ private fun build(
         if (CalcService.isNoCalc(ns, today)) continue
         val supply = CalcService.supplyFor(issuesByP[p.id].orEmpty(), ns, drug)
         val until = supply.coveredUntil() ?: continue // «запас > 5 лет» не попадает
-        val item = UrgentItem(patient, drug, p, null, until, UrgentItem.Kind.ENDED)
+        val item = UrgentItem(patient, drug, p, null, until, UrgentKind.ENDED)
         when {
             until.isBefore(today) -> ended.add(item)
             !until.isAfter(today.plusDays(drugThreshold.toLong())) -> low.add(item)
@@ -114,7 +115,7 @@ private fun build(
             val drug = rx.prescriptionId
                 ?.let { prescriptionById[it] }
                 ?.let { drugById[it.drugId] }
-            UrgentItem(patient, drug, null, rx, until, UrgentItem.Kind.RX)
+            UrgentItem(patient, drug, null, rx, until, UrgentKind.RX)
         } else null
     }.sortedBy { it.date }
 
@@ -194,7 +195,7 @@ private fun UrgentRow(
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clickable {
-                if (item.kind == UrgentItem.Kind.RX) {
+                if (item.kind == UrgentKind.RX) {
                     item.rx?.let { onOpenRx(item.patient.id, it.id) }
                 } else {
                     item.prescription?.let { onOpenPrescription(it.id) }
@@ -207,7 +208,7 @@ private fun UrgentRow(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     when (item.kind) {
-                        UrgentItem.Kind.RX -> item.drug?.name ?: "Рецепт ${item.rx?.series ?: ""} ${item.rx?.number ?: ""}"
+                        UrgentKind.RX -> item.drug?.name ?: "Рецепт ${item.rx?.series ?: ""} ${item.rx?.number ?: ""}"
                         else -> item.drug?.name ?: ""
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -216,7 +217,7 @@ private fun UrgentRow(
             Text(
                 item.date?.let { Dates.formatRu(it) } ?: "",
                 style = MaterialTheme.typography.labelLarge,
-                color = if (item.kind == UrgentItem.Kind.ENDED) MaterialTheme.colorScheme.error
+                color = if (item.kind == UrgentKind.ENDED) MaterialTheme.colorScheme.error
                 else androidx.compose.ui.graphics.Color(0xFFF9A825),
             )
         }
