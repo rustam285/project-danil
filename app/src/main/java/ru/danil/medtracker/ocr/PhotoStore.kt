@@ -3,7 +3,9 @@ package ru.danil.medtracker.ocr
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.FileOutputStream
 
@@ -17,10 +19,17 @@ object PhotoStore {
 
     /**
      * Сохраняет изображение из URI (камера/галерея) со сжатием.
+     * Поворот по EXIF применяется сразу: BitmapFactory его игнорирует, а пересжатый
+     * JPEG тег теряет — без этого портретные снимки хранятся повёрнутыми на 90°
+     * и OCR их не читает.
      * Возвращает относительный путь (rx_<id>_<n>.jpg) или бросает понятную ошибку.
      */
     fun saveCompressed(context: Context, source: Uri, nameHint: String): String {
+        val orientation = runCatching {
+            context.contentResolver.openInputStream(source)?.use { ExifInterface(it).rotationDegrees }
+        }.getOrDefault(0) ?: 0
         val bmp = decodeScaled(context, source)
+            ?.let { if (orientation != 0) applyRotation(it, orientation) else it }
             ?: throw IllegalStateException("Не удалось прочитать изображение")
         val target = File(dir(context), "$nameHint.jpg")
         try {
@@ -31,9 +40,23 @@ object PhotoStore {
             target.delete()
             throw IllegalStateException("Не хватает места для сохранения фото")
         } finally {
-            if (bmp != null && bmp !== decodeNoScale(context, source)) bmp.recycle()
+            runCatching { bmp.recycle() }
         }
         return target.name
+    }
+
+    /** Поворот/отражение по градусам из EXIF (0/90/180/270 + зеркальные случаи). */
+    private fun applyRotation(src: Bitmap, degrees: Int): Bitmap {
+        val matrix = Matrix()
+        when (degrees) {
+            90 -> matrix.postRotate(90f)
+            180 -> matrix.postRotate(180f)
+            270 -> matrix.postRotate(270f)
+            else -> return src
+        }
+        val rotated = Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+        if (rotated !== src) src.recycle()
+        return rotated
     }
 
     fun file(context: Context, relative: String): File = File(dir(context), relative)
@@ -41,9 +64,6 @@ object PhotoStore {
     fun delete(context: Context, relative: String) {
         file(context, relative).delete()
     }
-
-    private fun decodeNoScale(context: Context, uri: Uri): Bitmap? =
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
 
     /** Декодирование с уменьшением до MAX_SIDE по длинной стороне. */
     private fun decodeScaled(context: Context, uri: Uri): Bitmap? {

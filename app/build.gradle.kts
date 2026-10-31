@@ -25,7 +25,7 @@ android {
         targetSdk = 35
         // versionCode растёт автоматически: VERSION_CODE из CI (номер тега/запуска, п. 12.3)
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "1.0.0"
+        versionName = "1.1.0"
         vectorDrawables.useSupportLibrary = true
     }
 
@@ -107,6 +107,7 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.tesseract4android)
     implementation(libs.coil.compose)
+    implementation(libs.androidx.exifinterface)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.documentfile)

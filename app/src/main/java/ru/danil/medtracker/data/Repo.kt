@@ -41,7 +41,7 @@ data class PatientListItem(
 )
 
 /** Строка вкладки «Срочное» (п. 5.2). */
-enum class UrgentKind { ENDED, LOW, RX }
+enum class UrgentKind { ENDED, WAITING, LOW, RX }
 
 data class UrgentItem(
     val patient: Patient,
@@ -103,6 +103,9 @@ class Repo(
         } else {
             issueDao.update(issue)
             issue
+        }.also {
+            // выдача состоялась — «В ожидании поступления» больше не актуально
+            clearAwaitingRestock(prescriptionId, t)
         }
     }
 
@@ -138,7 +141,24 @@ class Repo(
             createdAt = t,
             updatedAt = t,
         )
-        return issue.copy(id = issueDao.insert(issue))
+        return issue.copy(id = issueDao.insert(issue)).also {
+            clearAwaitingRestock(prescriptionId, t)
+        }
+    }
+
+    /** «В ожидании поступления»: ручное включение/снятие статуса назначения. */
+    suspend fun setAwaitingRestock(prescriptionId: Long, awaiting: Boolean) {
+        val p = prescriptionDao.byId(prescriptionId) ?: return
+        if (p.awaitingRestock != awaiting) {
+            prescriptionDao.update(p.copy(awaitingRestock = awaiting, updatedAt = now()))
+        }
+    }
+
+    private suspend fun clearAwaitingRestock(prescriptionId: Long, t: Long) {
+        val p = prescriptionDao.byId(prescriptionId) ?: return
+        if (p.awaitingRestock) {
+            prescriptionDao.update(p.copy(awaitingRestock = false, updatedAt = t))
+        }
     }
 
     // ── Препараты (п. 5.9) ───────────────────────────────────────────────────

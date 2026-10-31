@@ -311,14 +311,19 @@ fun PatientCardScreen(
                                     )
                                 }
                             }
-                            if (v.noCalc) {
-                                Text("журнал", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else if (v.issues.isEmpty()) {
-                                Text("выдач нет", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else if (v.isUnlimited) {
-                                Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), fontWeight = FontWeight.SemiBold)
-                            } else {
-                                SupplyBadge(v.coveredUntil, CalcService.level(v.coveredUntil, state.threshold))
+                            Column(horizontalAlignment = Alignment.End) {
+                                if (v.noCalc) {
+                                    Text("журнал", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                } else if (v.issues.isEmpty()) {
+                                    Text("выдач нет", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                } else if (v.isUnlimited) {
+                                    Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), fontWeight = FontWeight.SemiBold)
+                                } else {
+                                    SupplyBadge(v.coveredUntil, CalcService.level(v.coveredUntil, state.threshold))
+                                }
+                                if (v.prescription.awaitingRestock) {
+                                    Text("в ожидании поступления", style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color(0xFF00796B))
+                                }
                             }
                             // Контекстный быстрый ввод выдачи (п. 5.3)
                             IconButton(onClick = { onAddIssue(v.prescription.id) }) {

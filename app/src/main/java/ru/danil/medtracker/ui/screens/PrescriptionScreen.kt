@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,6 +82,8 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
         val threshold: Int = 7,
         val patientId: Long = 0,
         val gapsAll: List<Pair<Long, Long>> = emptyList(),
+        /** «В ожидании поступления» (ручной статус, снимается при выдаче) */
+        val awaitingRestock: Boolean = false,
     )
 
     fun state(prescriptionId: Long) = combine(
@@ -133,12 +136,13 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
                     p, drug, ns, issuesList, journal, covered, unlimited, noCalc,
                     remainder, remainderPacks, settings.drugThresholdDays,
                     p?.patientId ?: 0, supply.gaps.map { Dates.toEpochDay(it.first) to Dates.toEpochDay(it.second) },
+                    p?.awaitingRestock ?: false,
                 )
             }
             val journal = issuesList.reversed().map { issue ->
                 JournalRow(issue, null, false, null)
             }
-            State(p, drug, ns, issuesList, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList())
+            State(p, drug, ns, issuesList, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList(), p?.awaitingRestock ?: false)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), State())
 
@@ -153,6 +157,10 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
             val p = repo.prescriptionDao.byId(id) ?: return@launch
             repo.prescriptionDao.update(p.copy(status = "ARCHIVE", updatedAt = System.currentTimeMillis()))
         }
+    }
+
+    fun setAwaiting(id: Long, awaiting: Boolean) {
+        viewModelScope.launch { repo.setAwaitingRestock(id, awaiting) }
     }
 }
 
@@ -225,6 +233,15 @@ fun PrescriptionScreen(
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                             Text("Остаток: ${state.remainder} шт${state.remainderPacks?.let { " ($it уп)" } ?: ""}")
+                        }
+                        // «В ожидании поступления» (п. 3.3): препарат закончился, нет на складе
+                        state.prescription?.let { p ->
+                            Spacer(Modifier.height(4.dp))
+                            FilterChip(
+                                selected = state.awaitingRestock,
+                                onClick = { vm.setAwaiting(p.id, !state.awaitingRestock) },
+                                label = { Text("В ожидании поступления") },
+                            )
                         }
                     }
                 }

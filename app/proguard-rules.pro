@@ -1,5 +1,9 @@
 # Tesseract4Android — нативный движок через JNI, имена методов менять нельзя
 -keep class cz.adaptech.tesseract4android.** { *; }
+# Приложение работает с классами из исходного пакета tess-two: нативная
+# библиотека ищет их по точным именам — переименование ломает RegisterNatives
+-keep class com.googlecode.tesseract.android.** { *; }
+-keep class com.googlecode.leptonica.android.** { *; }
 
 # kotlinx.serialization
 -keepattributes *Annotation*, InnerClasses

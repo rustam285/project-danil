@@ -39,7 +39,7 @@ app/src/main/java/ru/danil/medtracker/
 │   ├── SupplyEngine.kt            # ядро «обеспечен до» по Приложению Г ТЗ
 │   └── CalcService.kt             # мост Room→движок, форматирование норм, подсветка (Level)
 ├── data/
-│   ├── db/ (Entities.kt, Daos.kt, AppDatabase.kt)   # 7 таблиц, schemaVersion=1
+│   ├── db/ (Entities.kt, Daos.kt, AppDatabase.kt)   # 7 таблиц, schemaVersion=2
 │   ├── Repo.kt                    # операции + UI-модели (PrescriptionView, PatientListItem, UrgentItem)
 │   ├── SettingsStore.kt           # DataStore: уведомления, пороги, каталог копий, lastFullId
 │   └── AppContainer.kt            # ручной DI
@@ -47,7 +47,8 @@ app/src/main/java/ru/danil/medtracker/
 │   ├── CommonUi.kt                # DatePickerField (календарь), SupplyBadge, IntField, EmptyState
 │   ├── theme/Theme.kt             # светлая/тёмная
 │   └── screens/                   # Patients, Urgent, PatientCard/PatientEdit, Prescription(+Edit),
-│                                  # IssueForm, RxEdit (+OCR UI), Settings, CopyPrescriptions, Onboarding
+│                                  # IssueForm, RxEdit (+OCR UI), RxScan (вкладка «Рецепт»), Settings,
+│                                  # CopyPrescriptions, Onboarding
 ├── docx/
 │   ├── DocxBuilder.kt             # минимальный OOXML-генератор (ZIP вручную, без POI)
 │   ├── PlanDnDoc.kt               # «План диспансерного наблюдения» (п. 8.2)
@@ -55,7 +56,8 @@ app/src/main/java/ru/danil/medtracker/
 │   └── DocxShare.kt               # Загрузки/MedTracker + «Поделиться»
 ├── ocr/
 │   ├── OcrEngine.kt               # Tesseract rus+eng (модели в assets), предобработка, parse() полей
-│   └── PhotoStore.kt              # фото в filesDir/photos, сжатие ≤1600px/JPEG80
+│   ├── TextMatch.kt               # сопоставление OCR-строк с пациентами/препаратами (для RxScan)
+│   └── PhotoStore.kt              # фото в filesDir/photos, сжатие ≤1600px/JPEG80, EXIF-поворот
 ├── notify/Notify.kt               # AlarmScheduler (exact), AlarmReceiver, BootReceiver, CheckWorker,
 │                                  #   DailyCheck: одно сводное InboxStyle-уведомление в день
 └── backup/
@@ -77,7 +79,7 @@ app/src/main/java/ru/danil/medtracker/
 
 ## 6. Текущий статус
 
-Выпущено: **v1.0.0** (полный объём разделов 3–10 ТЗ) и **v1.0.1** — правки по результатам проверки на устройстве:
+Выпущено: **v1.0.0** (полный объём разделов 3–10 ТЗ), **v1.0.1** — правки по результатам проверки на устройстве, **v1.1.0** — OCR-фикс, вкладка «Рецепт», статус «В ожидании поступления»:
 
 1. Все поля дат — календарь Material 3 (`DatePickerField`), ручной ввод убран.
 2. Дата льготы редактируется календарём.
@@ -85,10 +87,13 @@ app/src/main/java/ru/danil/medtracker/
 4. Диалог препарата — FlowRow, чипы переносятся, а не сжимаются.
 5. «Выдач нет» вместо ложного «запас > 5 лет» (списки пациентов/карточка/назначение).
 6. Будущая дата рождения блокируется.
+7. **v1.1.0, OCR не распознавал ничего:** главная причина — EXIF-поворот не применялся (`BitmapFactory` игнорирует ориентацию, пересжатие JPEG тег стирает) → портретные снимки хранились повёрнутыми на 90°. Исправлено в `PhotoStore` (+ `androidx.exifinterface`); в `OcrEngine` добавлены апскейл до ~2600 px (~300 DPI), `PSM_AUTO` + `user_defined_dpi=300`, перебор поворотов 90/270/180 при «нечитаемом» тексте (`scoreText`), атомарное копирование traineddata, парсинг даты рождения, МКБ с кириллическими двойниками (Е10→E10). В proguard добавлены keep для `com.googlecode.tesseract/leptonica.**` (R8 ломал JNI в релизе). tessdata_best для rus отклонён — 14.6 МБ, APK вырос бы на ~11 МБ.
+8. **v1.1.0, вкладка «Рецепт»** (справа от «Срочное», `RxScanScreen`): скан бланка → OCR автоматически → проверка полей → автоподбор пациента по ФИО (создание нового на месте) и назначения по препарату → сохранение рецепта, кнопка «Выдать сейчас». Сопоставление — `ocr/TextMatch.kt`.
+9. **v1.1.0, «В ожидании поступления»** (`Prescription.awaitingRestock`, миграция БД v2): кнопка у закончившихся препаратов в «Срочном», отдельная секция, чип в экране назначения, маркер в карточке; любая выдача снимает статус автоматически (`Repo.saveIssue`/`saveInitialBalance`).
 
-Тесты: 25/25 (`SupplyEngineTest` — эталоны, `RationalTest`, `OcrEngineTest` — парсер).
+Тесты: 35/35 (`SupplyEngineTest` — эталоны, `RationalTest`, `OcrEngineTest`, `TextMatchTest`).
 
-**Ждёт проверки на устройстве (нужен телефон заказчика):** качество OCR на 10 реальных бланках (цель ≥80% полей), доставка уведомления 08:00 на Xiaomi/HyperOS (автозапуск), открытие .docx в Word/WPS, удобство ввода выдачи на живой базе.
+**Ждёт проверки на устройстве (нужен телефон заказчика):** качество OCR на 10 реальных бланках (цель ≥80% полей; правки v1.1.0 должны убрать полный провал), скан-поток «Рецепт», доставка уведомления 08:00 на Xiaomi/HyperOS (автозапуск), открытие .docx в Word/WPS.
 
 ## 7. Грабли, на которые уже наступали
 
@@ -100,6 +105,8 @@ app/src/main/java/ru/danil/medtracker/
 - **Windows→CI**: `gradlew` коммитится без бита исполнения — после первого коммита из Windows: `git update-index --chmod=+x gradlew`.
 - **CI**: пустая env-переменная `KEYSTORE_FILE=""` ломала signingConfig — проверять `isNullOrBlank`, не только null; созданию релиза нужен `permissions: contents: write` в workflow.
 - **Манифест**: транзитивные сетевые разрешения WorkManager вырезаются `tools:node="remove"` (ACCESS_NETWORK_STATE, FOREGROUND_SERVICE).
+- **Java regex + кириллица**: квантификатор сразу после кириллической буквы (`Даты?`) разбирается некорректно (проверено на JDK 22) — использовать символьные классы (`Дат[аы]`). `CASE_INSENSITIVE` без `UNICODE_CASE` регистр кириллицы НЕ сворачивает — указывать варианты явно (`[Рр]одив`, `РЕЦЕПТ|Рецепт`).
+- **Фото с камеры**: `BitmapFactory` игнорирует EXIF orientation, а `Bitmap.compress` его стирает — поворот применять до сохранения (`androidx.exifinterface`), иначе портретные снимки «боковые» и OCR бессилен.
 
 ## 8. Как делать правки (порядок)
 

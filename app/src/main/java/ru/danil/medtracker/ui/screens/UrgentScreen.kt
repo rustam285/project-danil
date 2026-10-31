@@ -15,11 +15,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -29,9 +31,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.danil.medtracker.calc.CalcService
-import ru.danil.medtracker.calc.SupplyOutcome
 import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.UrgentItem
 import ru.danil.medtracker.data.UrgentKind
@@ -62,13 +64,21 @@ class UrgentViewModel(container: AppContainer) : ViewModel() {
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UrgentState())
     }
+
+    /** «В ожидании поступления»: включить/снять статус вручную. */
+    fun setAwaiting(prescriptionId: Long, awaiting: Boolean) {
+        viewModelScope.launch { repo.setAwaitingRestock(prescriptionId, awaiting) }
+    }
 }
 
 data class UrgentState(
     val ended: List<UrgentItem> = emptyList(),
+    val waiting: List<UrgentItem> = emptyList(),
     val low: List<UrgentItem> = emptyList(),
     val rx: List<UrgentItem> = emptyList(),
 )
+
+private val WaitingColor = Color(0xFF00796B)
 
 private fun build(
     patients: List<ru.danil.medtracker.data.db.Patient>,
@@ -89,6 +99,7 @@ private fun build(
     val rxThreshold = settings.rxThresholdDays
 
     val ended = mutableListOf<UrgentItem>()
+    val waiting = mutableListOf<UrgentItem>()
     val low = mutableListOf<UrgentItem>()
 
     for (p in prescriptions) {
@@ -99,10 +110,15 @@ private fun build(
         if (CalcService.isNoCalc(ns, today)) continue
         val supply = CalcService.supplyFor(issuesByP[p.id].orEmpty(), ns, drug)
         val until = supply.coveredUntil() ?: continue // «запас > 5 лет» не попадает
-        val item = UrgentItem(patient, drug, p, null, until, UrgentKind.ENDED)
         when {
-            until.isBefore(today) -> ended.add(item)
-            !until.isAfter(today.plusDays(drugThreshold.toLong())) -> low.add(item)
+            until.isBefore(today) -> {
+                // закончилось и врач пометил «нет на складе» — своя секция;
+                // если запас восстановился, флаг игнорируем (снимется при выдаче)
+                val item = UrgentItem(patient, drug, p, null, until, UrgentKind.ENDED)
+                if (p.awaitingRestock) waiting.add(item.copy(kind = UrgentKind.WAITING)) else ended.add(item)
+            }
+            !until.isAfter(today.plusDays(drugThreshold.toLong())) ->
+                low.add(UrgentItem(patient, drug, p, null, until, UrgentKind.LOW))
             else -> {}
         }
     }
@@ -121,6 +137,7 @@ private fun build(
 
     return UrgentState(
         ended = ended.sortedBy { it.date },
+        waiting = waiting.sortedBy { it.date },
         low = low.sortedBy { it.date },
         rx = rxItems,
     )
@@ -138,7 +155,8 @@ fun UrgentScreen(
     Scaffold(
         topBar = { TopAppBar(title = { Text("Срочное") }) },
     ) { padding ->
-        val isEmpty = state.ended.isEmpty() && state.low.isEmpty() && state.rx.isEmpty()
+        val isEmpty = state.ended.isEmpty() && state.waiting.isEmpty() &&
+            state.low.isEmpty() && state.rx.isEmpty()
         if (isEmpty) {
             Column(Modifier.padding(padding).fillMaxSize()) {
                 EmptyState("Всё под контролем")
@@ -151,22 +169,33 @@ fun UrgentScreen(
                 if (state.ended.isNotEmpty()) {
                     item { SectionHeader("Закончилось") }
                     items(state.ended.size) { idx ->
-                        val it2 = state.ended[idx]
-                        UrgentRow(it2, onOpenPrescription, onOpenRx)
+                        UrgentRow(state.ended[idx], onOpenPrescription, onOpenRx) { id, awaiting ->
+                            vm.setAwaiting(id, awaiting)
+                        }
+                    }
+                }
+                if (state.waiting.isNotEmpty()) {
+                    item { SectionHeader("В ожидании поступления") }
+                    items(state.waiting.size) { idx ->
+                        UrgentRow(state.waiting[idx], onOpenPrescription, onOpenRx) { id, awaiting ->
+                            vm.setAwaiting(id, awaiting)
+                        }
                     }
                 }
                 if (state.low.isNotEmpty()) {
                     item { SectionHeader("Осталось мало") }
                     items(state.low.size) { idx ->
-                        val it2 = state.low[idx]
-                        UrgentRow(it2, onOpenPrescription, onOpenRx)
+                        UrgentRow(state.low[idx], onOpenPrescription, onOpenRx) { id, awaiting ->
+                            vm.setAwaiting(id, awaiting)
+                        }
                     }
                 }
                 if (state.rx.isNotEmpty()) {
                     item { SectionHeader("Рецепты") }
                     items(state.rx.size) { idx ->
-                        val it2 = state.rx[idx]
-                        UrgentRow(it2, onOpenPrescription, onOpenRx)
+                        UrgentRow(state.rx[idx], onOpenPrescription, onOpenRx) { id, awaiting ->
+                            vm.setAwaiting(id, awaiting)
+                        }
                     }
                 }
             }
@@ -189,6 +218,7 @@ private fun UrgentRow(
     item: UrgentItem,
     onOpenPrescription: (Long) -> Unit,
     onOpenRx: (Long, Long) -> Unit,
+    onToggleWaiting: (Long, Boolean) -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -202,24 +232,49 @@ private fun UrgentRow(
                 }
             },
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(item.patient.fio, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(2.dp))
+        Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(item.patient.fio, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when (item.kind) {
+                            UrgentKind.RX -> item.drug?.name ?: "Рецепт ${item.rx?.series ?: ""} ${item.rx?.number ?: ""}"
+                            else -> item.drug?.name ?: ""
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 Text(
-                    when (item.kind) {
-                        UrgentKind.RX -> item.drug?.name ?: "Рецепт ${item.rx?.series ?: ""} ${item.rx?.number ?: ""}"
-                        else -> item.drug?.name ?: ""
+                    item.date?.let { Dates.formatRu(it) } ?: "",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = when (item.kind) {
+                        UrgentKind.ENDED -> MaterialTheme.colorScheme.error
+                        UrgentKind.WAITING -> WaitingColor
+                        else -> Color(0xFFF9A825)
                     },
-                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            Text(
-                item.date?.let { Dates.formatRu(it) } ?: "",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (item.kind == UrgentKind.ENDED) MaterialTheme.colorScheme.error
-                else androidx.compose.ui.graphics.Color(0xFFF9A825),
-            )
+            // «В ожидании поступления» (п. 3.3): вручную или снимается после выдачи
+            when (item.kind) {
+                UrgentKind.ENDED -> item.prescription?.let { p ->
+                    TextButton(onClick = { onToggleWaiting(p.id, true) }) {
+                        Text("В ожидании поступления")
+                    }
+                }
+                UrgentKind.WAITING -> item.prescription?.let { p ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "ожидается поставка",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = WaitingColor,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { onToggleWaiting(p.id, false) }) { Text("Снять") }
+                    }
+                }
+                else -> {}
+            }
         }
     }
 }

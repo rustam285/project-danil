@@ -88,6 +88,9 @@ data class Prescription(
     val drugId: Long,
     /** ACTIVE / ARCHIVE (п. 3.3) */
     val status: String = "ACTIVE",
+    /** «В ожидании поступления»: препарат закончился, выдать нельзя — нет на складе.
+     *  Снимается автоматически при любой выдаче по назначению (или вручную). */
+    val awaitingRestock: Boolean = false,
     val createdAt: Long = 0,
     val updatedAt: Long = 0,
 )

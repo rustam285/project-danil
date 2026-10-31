@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -38,6 +39,7 @@ import ru.danil.medtracker.ui.screens.PatientsScreen
 import ru.danil.medtracker.ui.screens.PrescriptionEditScreen
 import ru.danil.medtracker.ui.screens.PrescriptionScreen
 import ru.danil.medtracker.ui.screens.RxEditScreen
+import ru.danil.medtracker.ui.screens.RxScanScreen
 import ru.danil.medtracker.ui.screens.SettingsScreen
 import ru.danil.medtracker.ui.screens.UrgentScreen
 import ru.danil.medtracker.ui.screens.CopyPrescriptionsScreen
@@ -47,6 +49,7 @@ object Routes {
     const val ONBOARDING = "onboarding"
     const val PATIENTS = "patients"
     const val URGENT = "urgent"
+    const val RX_SCAN = "rxScan"
     const val SETTINGS = "settings"
     const val PATIENT = "patient/{id}"
     const val PATIENT_EDIT = "patientEdit?patientId={patientId}"
@@ -103,6 +106,7 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
     val tabs = listOf(
         Tab(Routes.PATIENTS, "Пациенты") { Icon(Icons.Filled.Person, null) },
         Tab(Routes.URGENT, "Срочное") { Icon(Icons.Filled.NotificationsActive, null) },
+        Tab(Routes.RX_SCAN, "Рецепт") { Icon(Icons.Filled.CameraAlt, null) },
         Tab(Routes.SETTINGS, "Настройки") { Icon(Icons.Filled.Settings, null) },
     )
 
@@ -158,6 +162,9 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                         onOpenPrescription = { nav.navigate(Routes.prescription(it)) },
                         onOpenRx = { patientId, _ -> nav.navigate(Routes.patient(patientId)) },
                     )
+                }
+                composable(Routes.RX_SCAN) {
+                    RxScanScreen(onIssue = { nav.navigate(Routes.issueEdit(it, null)) })
                 }
                 composable(Routes.SETTINGS) { SettingsScreen() }
                 composable(Routes.PATIENT) {
