@@ -38,7 +38,7 @@ import kotlinx.coroutines.withContext
 import ru.danil.medtracker.calc.CalcService
 import ru.danil.medtracker.calc.SupplyEngine
 import ru.danil.medtracker.data.AppContainer
-import ru.danil.medtracker.ui.DateField
+import ru.danil.medtracker.ui.DatePickerField
 import ru.danil.medtracker.ui.IntField
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
@@ -168,7 +168,7 @@ fun IssueFormScreen(
                 Text(it.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(CalcService.drugForm(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            DateField("Дата выдачи", date, { date = it ?: Dates.today() }, Modifier.fillMaxWidth().padding(top = 8.dp))
+            DatePickerField("Дата выдачи", date, { date = it ?: Dates.today() }, Modifier.fillMaxWidth().padding(top = 8.dp))
 
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IntField("Упаковки", packs.toIntOrNull(), { packs = it?.toString() ?: "" }, Modifier.weight(1f))

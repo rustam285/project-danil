@@ -34,6 +34,10 @@ data class PatientListItem(
     /** Ближайшая дата «обеспечен до» по активным назначениям с расчётом срока */
     val nearestUntil: LocalDate?,
     val unlimitedOnly: Boolean,
+    /** активных назначений нет вообще */
+    val noPrescriptions: Boolean = false,
+    /** назначения есть, выдач ещё не было (замечание №5) */
+    val noIssues: Boolean = false,
 )
 
 /** Строка вкладки «Срочное» (п. 5.2). */

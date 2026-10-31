@@ -313,6 +313,8 @@ fun PatientCardScreen(
                             }
                             if (v.noCalc) {
                                 Text("журнал", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if (v.issues.isEmpty()) {
+                                Text("выдач нет", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else if (v.isUnlimited) {
                                 Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), fontWeight = FontWeight.SemiBold)
                             } else {

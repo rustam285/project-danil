@@ -54,7 +54,7 @@ import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.db.Rx
 import ru.danil.medtracker.ocr.OcrEngine
 import ru.danil.medtracker.ocr.PhotoStore
-import ru.danil.medtracker.ui.DateField
+import ru.danil.medtracker.ui.DatePickerField
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
 import java.io.File
@@ -182,6 +182,7 @@ fun RxEditScreen(
         )
     }
     var showCameraPermissionRationale by remember { mutableStateOf(false) }
+    var ocrReport by remember { mutableStateOf<String?>(null) }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { runCatching { rx = vm.addPhoto(context, rx, it) }.onFailure { vm.error.value = it.message } }
@@ -253,6 +254,19 @@ fun RxEditScreen(
                                 Dates.parseFlexible(parsed)?.let { rx = rx.copy(issueDate = Dates.toEpochDay(it)) }
                             }
                             draft.validDays?.let { rx = rx.copy(validDays = it) }
+                            // Отчёт: что нашлось, что нет (п. 6.4 — итог подтверждает человек)
+                            ocrReport = if (draft.rawText.length < 20) {
+                                "Текст не распознан. Переснимите бланк ближе, при хорошем свете и без наклона."
+                            } else {
+                                buildString {
+                                    append("Распознано ${draft.rawText.length} символов. Найдено:")
+                                    append(if (draft.series != null) " серия ${draft.series}" else " серия —")
+                                    append(if (draft.number != null) ", № ${draft.number}" else ", № —")
+                                    append(if (draft.issueDate != null) ", дата ${draft.issueDate}" else ", дата —")
+                                    append(if (draft.validDays != null) ", срок ${draft.validDays} дн" else ", срок —")
+                                    append(". Сверьте поля с фото и сохраните.")
+                                }
+                            }
                         }
                     },
                     enabled = !ocrRunning,
@@ -279,7 +293,7 @@ fun RxEditScreen(
                 rx.number, { rx = rx.copy(number = it) },
                 label = { Text("Номер (например 25 222 011 880)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
-            DateField(
+            DatePickerField(
                 "Дата выдачи рецепта",
                 rx.issueDate?.let { Dates.fromEpochDay(it) },
                 { rx = rx.copy(issueDate = it?.let { d -> Dates.toEpochDay(d) }) },
@@ -307,7 +321,7 @@ fun RxEditScreen(
                 )
             }
             if (rx.validUntil != null) {
-                DateField(
+                DatePickerField(
                     "Действителен до",
                     Dates.fromEpochDay(rx.validUntil!!),
                     { rx = rx.copy(validUntil = it?.let { d -> Dates.toEpochDay(d) }, validDays = null) },
@@ -365,6 +379,18 @@ fun RxEditScreen(
             OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Отмена") }
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    // Отчёт распознавания (п. 6.4)
+    ocrReport?.let { report ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { ocrReport = null },
+            title = { Text("Распознавание") },
+            text = { Text(report) },
+            confirmButton = {
+                TextButton(onClick = { ocrReport = null }) { Text("Понятно") }
+            },
+        )
     }
 }
 

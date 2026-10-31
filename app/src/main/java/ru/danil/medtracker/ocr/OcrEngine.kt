@@ -74,7 +74,9 @@ object OcrEngine {
     }
 
     /**
-     * Предобработка (п. 6.2): оттенки серого → растяжка контраста → порог Отсу.
+     * Предобработка (п. 6.2): оттенки серого + растяжка контраста.
+     * Жёсткую бинаризацию не делаем: у Tesseract свой внутренний порог,
+     * а Отсу по всему кадру на фото с тенями уничтожал текст (замечание №3).
      */
     fun preprocess(src: Bitmap): Bitmap {
         val w = src.width
@@ -92,55 +94,28 @@ object OcrEngine {
             val r = (p shr 16) and 0xFF
             val g = (p shr 8) and 0xFF
             val b = p and 0xFF
-            var v = (r * 30 + g * 59 + b * 11) / 100
+            val v = (r * 30 + g * 59 + b * 11) / 100
+            gray[i] = v
             if (v < min) min = v
             if (v > max) max = v
-            gray[i] = v
         }
-        // растяжка контраста (2–98 перцентили приближённо: обрезаем по 5% диапазона)
+        // растяжка контраста: срезаем по 2% диапазона с каждой стороны
         val span = max - min
-        if (span > 0) {
-            val lo = min + span / 20
-            val hi = max - span / 20
+        if (span > 10) {
+            val lo = min + span / 50
+            val hi = max - span / 50
             val range = (hi - lo).coerceAtLeast(1)
             for (i in gray.indices) {
-                gray[i] = (((gray[i] - lo) * 255) / range).coerceIn(0, 255)
+                val v = ((gray[i] - lo) * 255) / range
+                gray[i] = v.coerceIn(0, 255)
             }
         }
-        // порог Отсу
-        val threshold = otsu(gray)
         for (i in gray.indices) {
-            pixels[i] = if (gray[i] > threshold) Color.WHITE else Color.BLACK
+            val v = gray[i]
+            pixels[i] = Color.rgb(v, v, v)
         }
         bmp.setPixels(pixels, 0, w, 0, 0, w, h)
         return bmp
-    }
-
-    private fun otsu(gray: IntArray): Int {
-        val hist = IntArray(256)
-        gray.forEach { hist[it]++ }
-        val total = gray.size
-        var sum = 0L
-        for (t in 0..255) sum += t.toLong() * hist[t]
-        var sumB = 0L
-        var wB = 0
-        var maxVar = -1.0
-        var threshold = 127
-        for (t in 0..255) {
-            wB += hist[t]
-            if (wB == 0) continue
-            val wF = total - wB
-            if (wF == 0) break
-            sumB += t.toLong() * hist[t]
-            val mB = sumB.toDouble() / wB
-            val mF = (sum - sumB).toDouble() / wF
-            val between = wB.toDouble() * wF.toDouble() * (mB - mF) * (mB - mF)
-            if (between > maxVar) {
-                maxVar = between
-                threshold = t
-            }
-        }
-        return threshold
     }
 
     // ── Разбор полей (п. 6.3): бланки напечатаны, серии/номера/даты извлекаются надёжно ──
@@ -189,17 +164,21 @@ object OcrEngine {
             }
             ?: dates.firstOrNull()
 
-        // Срок действия: «90 дней», «Продолжительность … 90»
-        val validDays = Regex("""(?:Продолжительно\w*|Срок\w*)[^\d\n]{0,40}(\d{2,3})\s*(?:дн|дней|сут)""", RegexOption.IGNORE_CASE)
-            .find(text)?.groupValues?.get(1)?.toIntOrNull()
+        // Срок действия: «90 дней», «Продолжительность (дни) 90», «… на 60 дней»
+        val validDays = Regex("""(?:Продолж|Срок|действ\w*)[^\d\n]{0,40}(\d{2,3})""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 30..90 && it % 30 == 0 }
             ?: Regex("""\b(30|60|90)\s*(?:дн|дней|суток)""", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""\((?:дни|дн)\)\s*[:.]?\s*(30|60|90)\b""", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1)?.toIntOrNull()
 
-        // ФИО пациента: строка после «Ф.И.О» / «ФИО»
-        val fio = lines.firstOrNull { Regex("""(Ф\.?\s?И\.?\s?О\.?|ФИО)""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+        // ФИО пациента: строка с «Ф.И.О» / «ФИО» / «Пациент»
+        val fio = lines.firstOrNull {
+            Regex("""(Ф\.?\s?И\.?\s?О\.?|ФИО|[Пп]ациент[а-я]*)""").containsMatchIn(it)
+        }
             ?.replace(Regex("""(Ф\.?\s?И\.?\s?О\.?|ФИО)\s*[:.]?\s*""", RegexOption.IGNORE_CASE), "")
+            ?.replace(Regex("""^[Пп]ациент[а-я]*\s*[:.]?\s*"""), "")
             ?.trim()
             ?.takeIf { it.length >= 5 }
-            ?.replace(Regex("""[|_«»"]"""), "")
+            ?.replace(Regex("""[|_«»":]"""), "")
             ?.trim()
             ?.takeIf { Regex("""^[А-ЯЁа-яё\s.-]+$""").matches(it) && it.split(Regex("\\s+")).size >= 2 }
 

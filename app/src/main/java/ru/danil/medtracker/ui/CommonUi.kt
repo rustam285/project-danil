@@ -1,6 +1,7 @@
 package ru.danil.medtracker.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,7 +10,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -27,7 +36,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import ru.danil.medtracker.calc.Level
 import ru.danil.medtracker.util.Dates
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 
 /** Цвет подсветки (п. 7.4). */
 @Composable
@@ -89,34 +100,71 @@ fun ConfirmDialog(
     )
 }
 
-/** Поле даты ДД.ММ.ГГГГ с гибким парсингом. */
+/**
+ * Поле даты с календарём: тап открывает Material 3 DatePicker (вместо ручного ввода,
+ * который автоматически дополнял месяц и год — замечание №1).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DateField(
+fun DatePickerField(
     label: String,
     value: LocalDate?,
     onChange: (LocalDate?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by androidx.compose.runtime.remember(value) { androidx.compose.runtime.mutableStateOf(value?.let { Dates.formatRu(it) } ?: "") }
-    var error by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+
     OutlinedTextField(
-        value = text,
-        onValueChange = { s ->
-            text = s
-            val parsed = if (s.isBlank()) null else Dates.parseFlexible(s)
-            val looksComplete = s.count { it == '.' } >= 1 && s.length >= 5
-            error = looksComplete && parsed == null
-            if (!error && (parsed != null || s.isBlank())) onChange(parsed)
-        },
+        value = value?.let { Dates.formatRu(it) } ?: "",
+        onValueChange = {},
+        readOnly = true,
         label = { Text(label) },
-        isError = error,
-        supportingText = if (error) {
-            { Text("Формат ДД.ММ.ГГГГ", color = MaterialTheme.colorScheme.error) }
-        } else null,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        placeholder = { Text("выберите дату") },
+        trailingIcon = {
+            Row {
+                if (value != null) {
+                    IconButton(onClick = { onChange(null) }) {
+                        Icon(Icons.Filled.Clear, contentDescription = "Очистить", modifier = Modifier.padding(end = 0.dp))
+                    }
+                }
+                IconButton(onClick = { showPicker = true }) {
+                    Icon(Icons.Filled.CalendarMonth, contentDescription = "Выбрать дату")
+                }
+            }
+        },
         singleLine = true,
-        modifier = modifier,
+        modifier = modifier.clickable { showPicker = true },
     )
+
+    if (showPicker) {
+        val state = androidx.compose.material3.rememberDatePickerState(
+            initialSelectedDateMillis = value
+                ?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli()
+                ?: LocalDate.now().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val millis = state.selectedDateMillis
+                        val picked = millis?.let {
+                            Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                        }
+                        onChange(picked ?: LocalDate.now())
+                        showPicker = false
+                    },
+                ) { Text("Выбрать") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Отмена") }
+            },
+        ) {
+            DatePicker(state = state, title = {
+                Text(label, modifier = Modifier.padding(start = 24.dp, top = 16.dp))
+            })
+        }
+    }
 }
 
 /** Числовое поле с целым значением ≥ 0. */
@@ -127,8 +175,8 @@ fun IntField(
     onChange: (Int?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by androidx.compose.runtime.remember(value) {
-        androidx.compose.runtime.mutableStateOf(value?.toString() ?: "")
+    var text by remember(value) {
+        mutableStateOf(value?.toString() ?: "")
     }
     OutlinedTextField(
         value = text,

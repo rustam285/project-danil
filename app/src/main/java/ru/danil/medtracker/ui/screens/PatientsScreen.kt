@@ -96,18 +96,29 @@ class PatientsViewModel(container: AppContainer) : ViewModel() {
         val normsByP = norms.groupBy { it.prescriptionId }
         val issuesByP = issues.groupBy { it.prescriptionId }
         return patients.map { p ->
-            val results = prescriptions.filter { it.patientId == p.id }.mapNotNull { pr ->
+            val active = prescriptions.filter { it.patientId == p.id }
+            if (active.isEmpty()) {
+                return@map PatientListItem(p, null, false, noPrescriptions = true)
+            }
+            // назначения с расчётом срока (без noCalc)
+            val covered = active.mapNotNull { pr ->
                 val drug = drugById[pr.drugId] ?: return@mapNotNull null
                 val ns = normsByP[pr.id].orEmpty()
                 if (CalcService.isNoCalc(ns, today)) return@mapNotNull null
-                val supply = CalcService.supplyFor(issuesByP[pr.id].orEmpty(), ns, drug)
-                Pair(supply.coveredUntil(), supply.outcome is ru.danil.medtracker.calc.SupplyOutcome.Unlimited)
+                val issues = issuesByP[pr.id].orEmpty()
+                if (issues.isEmpty()) return@mapNotNull null // выдач не было
+                CalcService.supplyFor(issues, ns, drug).coveredUntil()
             }
-            val dated = results.mapNotNull { it.first }
+            if (covered.isEmpty()) {
+                // назначения есть, но выдач ещё не было (замечание №5)
+                return@map PatientListItem(p, null, false, noIssues = true)
+            }
+            val dated = covered.mapNotNull { it }
             PatientListItem(
                 patient = p,
                 nearestUntil = dated.minOrNull(),
-                unlimitedOnly = dated.isEmpty() && results.any { it.second },
+                // выдачи есть, дат нет ⇒ все «запас > 5 лет»
+                unlimitedOnly = dated.isEmpty(),
             )
         }
     }
@@ -215,13 +226,28 @@ private fun PatientRow(item: PatientListItem, threshold: Int, onClick: () -> Uni
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            val level = CalcService.level(item.nearestUntil, threshold)
-            SupplyBadge(
-                until = item.nearestUntil,
-                level = if (item.unlimitedOnly) Level.GREEN else level,
-            )
+            when {
+                item.noPrescriptions -> GrayHint("нет назначений")
+                item.noIssues -> GrayHint("выдач нет")
+                item.unlimitedOnly -> Text(
+                    "запас > 5 лет",
+                    color = androidx.compose.ui.graphics.Color(0xFF2E7D32),
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                else -> SupplyBadge(item.nearestUntil, CalcService.level(item.nearestUntil, threshold))
+            }
         }
     }
+}
+
+@Composable
+private fun GrayHint(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** Диалог «Сводная потребность» (п. 8.3): выбор периода и генерация Word. */

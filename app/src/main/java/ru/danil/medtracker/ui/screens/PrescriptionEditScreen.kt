@@ -44,7 +44,7 @@ import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.db.Drug
 import ru.danil.medtracker.data.db.Norm
 import ru.danil.medtracker.data.db.Prescription
-import ru.danil.medtracker.ui.DateField
+import ru.danil.medtracker.ui.DatePickerField
 import ru.danil.medtracker.ui.IntField
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
@@ -231,7 +231,7 @@ fun PrescriptionEditScreen(
             )
 
             Text("Норма выдачи", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
-            DateField("Действует с", norm.validFrom, { norm = norm.copy(validFrom = it ?: LocalDate.now()) }, Modifier.fillMaxWidth())
+            DatePickerField("Действует с", norm.validFrom, { norm = norm.copy(validFrom = it ?: LocalDate.now()) }, Modifier.fillMaxWidth())
 
             Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = norm.kind == NormDraft.NormKind.PER_DAY, onClick = { norm = norm.copy(kind = NormDraft.NormKind.PER_DAY) }, label = { Text("шт/день") })
@@ -271,10 +271,10 @@ fun PrescriptionEditScreen(
                     Text("Уже обеспечен (начальный остаток)")
                 }
                 if (showInitialBalance) {
-                    DateField("Остаток на дату", initialBalance.dateEpoch?.let { Dates.fromEpochDay(it) }, {
+                    DatePickerField("Остаток на дату", initialBalance.dateEpoch?.let { Dates.fromEpochDay(it) }, {
                         initialBalance = initialBalance.copy(dateEpoch = it?.let { d -> Dates.toEpochDay(d) })
                     }, Modifier.fillMaxWidth())
-                    DateField("Обеспечен до", initialBalance.shownUntilEpoch?.let { Dates.fromEpochDay(it) }, {
+                    DatePickerField("Обеспечен до", initialBalance.shownUntilEpoch?.let { Dates.fromEpochDay(it) }, {
                         initialBalance = initialBalance.copy(shownUntilEpoch = it?.let { d -> Dates.toEpochDay(d) })
                     }, Modifier.fillMaxWidth())
                     IntField("Остаток, шт (если известен)", initialBalance.remainderPieces, {
@@ -359,7 +359,8 @@ fun PrescriptionEditScreen(
     }
 }
 
-/** Диалог создания препарата (п. 3.2, 5.9). */
+/** Диалог создания препарата (п. 3.2, 5.9). Чипы переносятся строками — не сжимаются (замечание №4). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun DrugCreateDialog(
     duplicateWarning: String?,
@@ -380,7 +381,12 @@ fun DrugCreateDialog(
         onDismissRequest = onDismiss,
         title = { Text("Новый препарат") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+            Column(
+                Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(
                     name, { name = it; onCheckDuplicate(it) },
                     label = { Text("Название *") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -388,37 +394,41 @@ fun DrugCreateDialog(
                 duplicateWarning?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
-                    listOf("Лекарство", "Расходник", "Питание").forEach { c ->
-                        FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) })
+                Column {
+                    Text("Категория", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Лекарство", "Расходник", "Питание").forEach { c ->
+                            FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) })
+                        }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
-                    listOf("упаковка", "флакон", "банка", "штука").forEach { u ->
-                        FilterChip(selected = unit == u, onClick = { unit = u }, label = { Text(u) })
+                Column {
+                    Text("Единица выдачи", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("упаковка", "флакон", "банка", "штука").forEach { u ->
+                            FilterChip(selected = unit == u, onClick = { unit = u }, label = { Text(u) })
+                        }
                     }
                 }
-                Row(Modifier.padding(top = 8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     IntField("Штук в уп. *", piecesPerPack.toIntOrNull() ?: 1, { piecesPerPack = (it ?: 1).toString() }, Modifier.weight(1f))
-                    Spacer(Modifier.width(8.dp))
                     IntField("Конц., МЕ/мл", concMe.toIntOrNull(), { concMe = it?.toString() ?: "" }, Modifier.weight(1f))
                 }
-                Row(Modifier.padding(top = 8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     IntField("Объём, мл", volume.toIntOrNull(), { volume = it?.toString() ?: "" }, Modifier.weight(1f))
-                    Spacer(Modifier.width(8.dp))
                     IntField("Конц., %", concPct.toIntOrNull(), { concPct = it?.toString() ?: "" }, Modifier.weight(1f))
                 }
                 OutlinedTextField(
                     pieceNouns, { pieceNouns = it },
-                    label = { Text("Название штуки: картридж/картриджа/картриджей") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text("Название штуки (для документов)") },
+                    placeholder = { Text("картридж/картриджа/картриджей") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
                     "МЕ в штуке = концентрация × объём" +
                         ((concMe.toIntOrNull()?.times(volume.toIntOrNull() ?: 0))?.takeIf { it > 0 }?.let { " = $it МЕ" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
         },

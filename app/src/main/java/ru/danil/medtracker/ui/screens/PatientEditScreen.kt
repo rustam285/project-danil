@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
 import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.db.Benefit
 import ru.danil.medtracker.data.db.Patient
-import ru.danil.medtracker.ui.DateField
+import ru.danil.medtracker.ui.DatePickerField
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
 import java.time.LocalDate
@@ -147,7 +147,11 @@ fun PatientEditScreen(
     var doctor by remember(loaded) { mutableStateOf(draft.doctor ?: "") }
     var notes by remember(loaded) { mutableStateOf(draft.notes) }
 
-    val valid = fio.isNotBlank() && birth != null && address.isNotBlank()
+    val today = Dates.today()
+    val birthInFuture = birth != null && birth!!.isAfter(today)
+    var editBenefitIdx by remember { mutableStateOf<Int?>(null) }
+    // Дата рождения в будущем недопустима (замечание №6)
+    val valid = fio.isNotBlank() && birth != null && !birthInFuture && address.isNotBlank()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text(if (patientId == null) "Новый пациент" else "Изменить пациента") }) },
@@ -160,19 +164,39 @@ fun PatientEditScreen(
                 .padding(16.dp),
         ) {
             OutlinedTextField(fio, { fio = it }, label = { Text("ФИО *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            DateField("Дата рождения *", birth, { birth = it }, Modifier.fillMaxWidth())
-            OutlinedTextField(address, { address = it }, label = { Text("Адрес *") }, modifier = Modifier.fillMaxWidth())
+            DatePickerField("Дата рождения *", birth, { birth = it }, Modifier.fillMaxWidth().padding(top = 8.dp))
+            if (birthInFuture) {
+                Text(
+                    "Дата рождения не может быть в будущем",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            OutlinedTextField(address, { address = it }, label = { Text("Адрес *") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             OutlinedTextField(school, { school = it }, label = { Text("Школа / класс / детсад") }, modifier = Modifier.fillMaxWidth())
-            DateField("Начало заболевания", illnessStart, { illnessStart = it }, Modifier.fillMaxWidth())
+            DatePickerField("Начало заболевания", illnessStart, { illnessStart = it }, Modifier.fillMaxWidth())
 
             Text("Льгота", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
+            // Дата действия льготы редактируется календарём (замечание №2)
             benefits.forEachIndexed { idx, b ->
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
                         (if (b.type == "federal") "Федеральная" else "Региональная") + " с ${Dates.formatRu(b.since)}",
                         modifier = Modifier.weight(1f),
                     )
+                    TextButton(onClick = {
+                        // быстрый сдвиг: тап по строке открывает календарь ниже
+                        editBenefitIdx = if (editBenefitIdx == idx) null else idx
+                    }) { Text("Изменить дату") }
                     TextButton(onClick = { benefits = benefits.filterIndexed { i, _ -> i != idx } }) { Text("Убрать") }
+                }
+                if (editBenefitIdx == idx) {
+                    DatePickerField(
+                        "Действует с",
+                        Dates.fromEpochDay(b.since),
+                        { d -> d?.let { nd -> benefits = benefits.toMutableList().also { list -> list[idx] = b.copy(since = Dates.toEpochDay(nd)) } } },
+                        Modifier.fillMaxWidth(),
+                    )
                 }
             }
             Row {
@@ -182,16 +206,6 @@ fun PatientEditScreen(
                 TextButton(onClick = {
                     benefits = benefits + Benefit("federal", Dates.toEpochDay(LocalDate.now()))
                 }) { Text("+ Федеральная") }
-            }
-            var benefitEditIdx by remember { mutableStateOf<Int?>(null) }
-            benefitEditIdx?.let { idx ->
-                val b = benefits.getOrNull(idx) ?: return@let
-                DateField(
-                    "Действует с (льгота)",
-                    Dates.fromEpochDay(b.since),
-                    { d -> d?.let { nd -> benefits = benefits.toMutableList().also { list -> list[idx] = b.copy(since = Dates.toEpochDay(nd)) } } },
-                    Modifier.fillMaxWidth(),
-                )
             }
 
             OutlinedTextField(repName, { repName = it }, label = { Text("Представитель (родитель)") }, modifier = Modifier.fillMaxWidth())
@@ -223,7 +237,11 @@ fun PatientEditScreen(
             }
             if (!valid) {
                 Text(
-                    "Заполните ФИО, дату рождения и адрес",
+                    when {
+                        fio.isBlank() || address.isBlank() -> "Заполните ФИО, дату рождения и адрес"
+                        birth == null -> "Укажите дату рождения"
+                        else -> "Дата рождения не может быть в будущем"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),

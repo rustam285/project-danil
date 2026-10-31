@@ -211,6 +211,9 @@ fun PrescriptionScreen(
                         Spacer(Modifier.height(8.dp))
                         if (state.noCalc) {
                             Text("Ведётся только журнал выдач", style = MaterialTheme.typography.bodyMedium)
+                        } else if (state.issues.isEmpty()) {
+                            // без выдач нет и запаса (замечание №5)
+                            Text("Выдач не было — запас не рассчитывается", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else if (state.unlimited) {
                             Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         } else {
