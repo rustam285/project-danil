@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local configuration
+local.properties
+
+# Signing — ключи никогда не попадают в репозиторий (п. 12.3 ТЗ)
+*.keystore
+*.jks
+keystore.properties
+
+# Backups and local exports (п. 12.5 ТЗ)
+*.mtbackup
+*.mtdelta
+exports/
+
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Real patient data is FORBIDDEN in this repo (п. 12.5 ТЗ)
+Материалы/
+*.jpg.local
+
+# Служебные файлы окружения
+.mimosa/
