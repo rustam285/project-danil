@@ -234,7 +234,7 @@ class BackupManager(private val container: AppContainer, private val context: Co
             }
             if (!manifestFound) throw BackupException("Файл не является копией Med Tracker (нет манифеста)")
             if (!dbFound) throw BackupException("Копия повреждена: нет базы данных")
-            manifest = runCatching { BackupJson.decodeManifest(manifestBytes.toString("UTF-8")) }
+            manifest = runCatching { BackupJson.decodeManifest(String(manifestBytes.toByteArray(), Charsets.UTF_8)) }
                 .getOrElse { throw BackupException("Манифест копии повреждён") }
             // Контрольная сумма db.json по исходным байтам (п. 9.5)
             val dbRaw = dbBytes.toByteArray()
@@ -242,7 +242,7 @@ class BackupManager(private val container: AppContainer, private val context: Co
             if (expectedDb != null && expectedDb != sha256(dbRaw)) {
                 throw BackupException("Копия повреждена: контрольная сумма базы не совпадает")
             }
-            dbJson = runCatching { BackupJson.decodeDb(dbRaw.toString("UTF-8")) }
+            dbJson = runCatching { BackupJson.decodeDb(String(dbRaw, Charsets.UTF_8)) }
                 .getOrElse { throw BackupException("База в копии повреждена") }
         }
         // Контрольные суммы фото (п. 9.5)
@@ -352,7 +352,7 @@ class BackupManager(private val container: AppContainer, private val context: Co
         val full = readBackup(fullUri)
         val deltas = deltaUris.map { readBackup(it) }.sortedBy { it.manifest.createdAt }
         val merged = merge(full, deltas)
-        val photos = full.photos + deltas.flatMap { it.photos }
+        val photos = full.photos + deltas.flatMap { it.photos.toList() }
 
         // Страховая копия текущего состояния (п. 9.3); при неудаче — отмена
         try {

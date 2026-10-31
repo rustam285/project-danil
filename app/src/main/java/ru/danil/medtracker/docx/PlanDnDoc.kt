@@ -91,12 +91,12 @@ object PlanDnDoc {
                     b.para(if (until.isBlank()) line else "$line — $until")
                 }
             }
-            if (sortedIssues.isEmpty()) b.para("выдач не было", italic = false)
+            if (sortedIssues.isEmpty()) b.para("выдач не было")
 
             // Текущий статус
             if (!v.noCalc) {
                 when {
-                    v.isUnlimited -> b.para(runsStatus("Запас достаточен (более 5 лет)"), bold = true)
+                    v.isUnlimited -> b.paraRun(runsStatus("Запас достаточен (более 5 лет)"))
                     v.coveredUntil != null -> {
                         b.para(
                             DocxBuilder.Run("Обеспечен до ", true),
@@ -121,11 +121,8 @@ object PlanDnDoc {
 
     private fun runsStatus(s: String) = DocxBuilder.Run(s, true)
 
-    private fun DocxBuilder.para(r: DocxBuilder.Run, bold: Boolean = false) {
-        this.para(listOf(r))
-    }
-
-    private fun DocxBuilder.para(vararg runs: DocxBuilder.Run) {
-        this.para(runs.toList())
+    /** Абзац из одного Run (жирность несёт сам Run). */
+    private fun DocxBuilder.paraRun(r: DocxBuilder.Run) {
+        this.para(r)
     }
 }

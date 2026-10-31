@@ -140,6 +140,6 @@ object SummaryDoc {
     /** Округление точной дроби вверх до целой штуки. */
     private fun ceilR(r: Rational): Long {
         val whole = r.truncate()
-        return if (!r.minus(Rational(whole, java.math.BigInteger.ONE)).isZero()) whole.toLong() + 1 else whole.toLong()
+        return if (!r.minus(Rational.of(whole, java.math.BigInteger.ONE)).isZero()) whole.toLong() + 1 else whole.toLong()
     }
 }

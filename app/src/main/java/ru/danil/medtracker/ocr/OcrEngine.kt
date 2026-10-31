@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
-import cz.adaptech.tesseract4android.TessBaseAPI
+import com.googlecode.tesseract.android.TessBaseAPI
 import java.io.File
 import java.io.FileOutputStream
 
@@ -48,8 +48,9 @@ object OcrEngine {
     private fun api(context: Context): TessBaseAPI {
         val dataPath = ensureTessData(context)
         val lang = "rus+eng"
-        if (initialized != null && initializedLang == lang) return initialized!!
-        initialized?.recycle()
+        val existing = initialized
+        if (existing != null && initializedLang == lang) return existing
+        existing?.recycle()
         val tess = TessBaseAPI()
         check(tess.init(dataPath, lang)) { "Не удалось инициализировать распознавание" }
         initialized = tess

@@ -35,3 +35,13 @@ object StatusColors {
     @Composable
     fun red() = MaterialTheme.colorScheme.error
 }
+
+/** Тема приложения: светлая/тёмная по системе (п. 11.4). */
+@Composable
+fun MedTrackerTheme(content: @Composable () -> Unit) {
+    val dark = isSystemInDarkTheme()
+    MaterialTheme(
+        colorScheme = if (dark) DarkColors else LightColors,
+        content = content,
+    )
+}

@@ -183,7 +183,7 @@ object SupplyEngine {
             d = d.plusDays(1)
         }
         val whole = sum.truncate()
-        return if (!sum.minus(Rational(whole, java.math.BigInteger.ONE)).isZero()) whole.toLong() + 1 else whole.toLong()
+        return if (!sum.minus(Rational.of(whole, java.math.BigInteger.ONE)).isZero()) whole.toLong() + 1 else whole.toLong()
     }
 
     /**
