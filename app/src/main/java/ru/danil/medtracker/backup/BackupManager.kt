@@ -265,7 +265,7 @@ class BackupManager(private val container: AppContainer, private val context: Co
             var e = zip.nextEntry
             while (e != null) {
                 if (e.name == "manifest.json") {
-                    return BackupJson.decodeManifest(zip.readBytes().toString("UTF-8"))
+                    return BackupJson.decodeManifest(String(zip.readBytes(), Charsets.UTF_8))
                 }
                 e = zip.nextEntry
             }
