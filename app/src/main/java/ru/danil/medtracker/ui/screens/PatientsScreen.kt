@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material3.Card
@@ -118,14 +119,21 @@ fun PatientsScreen(
     val vm = appViewModel { PatientsViewModel(it) }
     val items by vm.items.collectAsStateWithLifecycle()
     val threshold by vm.threshold.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var alphabetical by remember { mutableStateOf(false) }
+    var showSummaryDialog by remember { mutableStateOf(false) }
+    var summaryFile by remember { mutableStateOf<java.io.File?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Пациенты") },
                 actions = {
+                    IconButton(onClick = { showSummaryDialog = true }) {
+                        Icon(Icons.Filled.Description, contentDescription = "Сводная потребность")
+                    }
                     IconButton(onClick = { alphabetical = !alphabetical }) {
                         Icon(Icons.Filled.SortByAlpha, contentDescription = "Сортировка")
                     }
@@ -176,6 +184,16 @@ fun PatientsScreen(
             }
         }
     }
+
+    if (showSummaryDialog) {
+        SummaryDialog(
+            onGenerated = { file ->
+                showSummaryDialog = false
+                ru.danil.medtracker.docx.DocxShare.saveViaSaf(context, file)
+            },
+            onDismiss = { showSummaryDialog = false },
+        )
+    }
 }
 
 @Composable
@@ -200,5 +218,78 @@ private fun PatientRow(item: PatientListItem, threshold: Int, onClick: () -> Uni
                 level = if (item.unlimitedOnly) Level.GREEN else level,
             )
         }
+    }
+}
+
+/** Диалог «Сводная потребность» (п. 8.3): выбор периода и генерация Word. */
+@Composable
+private fun SummaryDialog(
+    onGenerated: (java.io.File) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vm = appViewModel { SummaryViewModel(it) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val months = (0..5).map { java.time.YearMonth.now().plusMonths(it.toLong()) }
+    var selected by remember { mutableStateOf(months[1]) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Сводная потребность") },
+        text = {
+            Column {
+                Text("Период:")
+                months.forEach { m ->
+                    androidx.compose.material3.FilterChip(
+                        selected = selected == m,
+                        onClick = { selected = m },
+                        label = {
+                            val monthNames = listOf("январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь")
+                            Text("${monthNames[m.monthValue - 1]} ${m.year}")
+                        },
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    scope.launch {
+                        busy = true
+                        runCatching { vm.generate(context, selected) }
+                            .onSuccess { onGenerated(it) }
+                            .onFailure { error = it.message }
+                        busy = false
+                    }
+                },
+                enabled = !busy,
+            ) { Text(if (busy) "…" else "Создать") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
+}
+
+class SummaryViewModel(private val container: ru.danil.medtracker.data.AppContainer) : androidx.lifecycle.ViewModel() {
+    suspend fun generate(context: android.content.Context, period: java.time.YearMonth): java.io.File {
+        val repo = container.repo
+        val input = ru.danil.medtracker.docx.SummaryDoc.Input(
+            patients = repo.patientDao.all(),
+            prescriptions = repo.prescriptionDao.allActive(),
+            drugs = repo.drugDao.all(),
+            norms = repo.normDao.all(),
+            issues = repo.issueDao.all(),
+        )
+        val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ru.danil.medtracker.docx.SummaryDoc.build(input, period)
+        }
+        val dir = java.io.File(context.cacheDir, "docs").apply { mkdirs() }
+        val monthNames = listOf("01","02","03","04","05","06","07","08","09","10","11","12")
+        val file = java.io.File(dir, "Сводная_потребность_${monthNames[period.monthValue - 1]}.${period.year % 100}.docx")
+        file.writeBytes(bytes)
+        return file
     }
 }

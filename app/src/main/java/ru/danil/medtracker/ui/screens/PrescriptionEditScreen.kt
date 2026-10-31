@@ -57,6 +57,15 @@ class PrescriptionEditViewModel(private val container: AppContainer) : ViewModel
     val duplicateWarning = MutableStateFlow<String?>(null)
     val saved = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
+    val existingPrescription = MutableStateFlow<Prescription?>(null)
+
+    /** Режим «новая норма к существующему назначению» (п. 5.4: кнопка «+ норма»). */
+    fun loadPrescription(prescriptionId: Long) {
+        viewModelScope.launch {
+            val p = repo.prescriptionDao.byId(prescriptionId) ?: return@launch
+            existingPrescription.value = p
+        }
+    }
 
     fun checkDuplicate(name: String, excludeId: Long? = null) {
         viewModelScope.launch {
@@ -172,9 +181,20 @@ fun PrescriptionEditScreen(
     val duplicateWarning by vm.duplicateWarning.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val existingPrescription by vm.existingPrescription.collectAsStateWithLifecycle()
     LaunchedEffect(saved) { if (saved) onSaved() }
+    LaunchedEffect(prescriptionId) { prescriptionId?.let { vm.loadPrescription(it) } }
 
-    var selectedDrug by remember { mutableStateOf<Drug?>(null) }
+    var selectedDrug by remember(existingPrescription) {
+        mutableStateOf<Drug?>(null)
+    }
+    // предзаполняем препарат существующего назначения
+    LaunchedEffect(existingPrescription, drugs) {
+        val p = existingPrescription
+        if (p != null && selectedDrug == null) {
+            selectedDrug = drugs.firstOrNull { it.id == p.drugId }
+        }
+    }
     var showDrugDialog by remember { mutableStateOf(false) }
     var showDrugCreate by remember { mutableStateOf(false) }
     var norm by remember { mutableStateOf(NormDraft()) }
@@ -281,7 +301,7 @@ fun PrescriptionEditScreen(
                         else -> null
                     }
                     if (localError == null) {
-                        vm.save(null, patientId, drug!!, norm, if (showInitialBalance) initialBalance else null)
+                        vm.save(existingPrescription, patientId, drug!!, norm, if (showInitialBalance) initialBalance else null)
                     }
                 },
                 enabled = selectedDrug != null,

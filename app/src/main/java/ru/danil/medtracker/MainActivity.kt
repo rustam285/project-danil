@@ -23,10 +23,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import ru.danil.medtracker.data.AppSettings
 import ru.danil.medtracker.ui.screens.IssueFormScreen
 import ru.danil.medtracker.ui.screens.OnboardingScreen
@@ -171,7 +173,12 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                         onBack = { nav.popBackStack() },
                     )
                 }
-                composable(Routes.PATIENT_EDIT) {
+                composable(
+                    Routes.PATIENT_EDIT,
+                    arguments = listOf(navArgument("patientId") {
+                        type = NavType.StringType; defaultValue = "-1"
+                    }),
+                ) {
                     PatientEditScreen(
                         patientId = it.arguments?.getString("patientId")?.toLongOrNull()?.takeIf { v -> v > 0 },
                         onSaved = { nav.popBackStack() },
@@ -190,7 +197,13 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                         onBack = { nav.popBackStack() },
                     )
                 }
-                composable(Routes.PRESCRIPTION_EDIT) {
+                composable(
+                    Routes.PRESCRIPTION_EDIT,
+                    arguments = listOf(
+                        navArgument("patientId") { type = NavType.StringType; defaultValue = "-1" },
+                        navArgument("prescriptionId") { type = NavType.StringType; defaultValue = "-1" },
+                    ),
+                ) {
                     PrescriptionEditScreen(
                         patientId = it.arguments?.getString("patientId")?.toLongOrNull() ?: return@composable,
                         prescriptionId = it.arguments?.getString("prescriptionId")?.toLongOrNull()?.takeIf { v -> v > 0 },
@@ -198,7 +211,13 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                         onCancel = { nav.popBackStack() },
                     )
                 }
-                composable(Routes.ISSUE_EDIT) {
+                composable(
+                    Routes.ISSUE_EDIT,
+                    arguments = listOf(
+                        navArgument("prescriptionId") { type = NavType.StringType; defaultValue = "-1" },
+                        navArgument("issueId") { type = NavType.StringType; defaultValue = "-1" },
+                    ),
+                ) {
                     IssueFormScreen(
                         prescriptionId = it.arguments?.getString("prescriptionId")?.toLongOrNull() ?: return@composable,
                         issueId = it.arguments?.getString("issueId")?.toLongOrNull()?.takeIf { v -> v > 0 },
@@ -206,7 +225,14 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                         onCancel = { nav.popBackStack() },
                     )
                 }
-                composable(Routes.RX_EDIT) {
+                composable(
+                    Routes.RX_EDIT,
+                    arguments = listOf(
+                        navArgument("patientId") { type = NavType.StringType; defaultValue = "-1" },
+                        navArgument("rxId") { type = NavType.StringType; defaultValue = "-1" },
+                        navArgument("prescriptionId") { type = NavType.StringType; defaultValue = "-1" },
+                    ),
+                ) {
                     RxEditScreen(
                         patientId = it.arguments?.getString("patientId")?.toLongOrNull() ?: return@composable,
                         rxId = it.arguments?.getString("rxId")?.toLongOrNull()?.takeIf { v -> v > 0 },

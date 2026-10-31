@@ -276,6 +276,11 @@ fun PatientCardScreen(
             // Назначения (п. 5.3)
             item {
                 Text("Назначения", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Тап по строке — детали; кнопка «+» — быстрая выдача",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (state.views.isEmpty()) {
                 item { EmptyState("Назначений пока нет — добавьте первое", "Добавить назначение") { onAddPrescription(patientId) } }
@@ -312,6 +317,10 @@ fun PatientCardScreen(
                                 Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), fontWeight = FontWeight.SemiBold)
                             } else {
                                 SupplyBadge(v.coveredUntil, CalcService.level(v.coveredUntil, state.threshold))
+                            }
+                            // Контекстный быстрый ввод выдачи (п. 5.3)
+                            IconButton(onClick = { onAddIssue(v.prescription.id) }) {
+                                Icon(Icons.Filled.Add, "Выдать")
                             }
                         }
                     }

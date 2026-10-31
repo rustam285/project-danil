@@ -295,7 +295,13 @@ fun RxEditScreen(
                 }
                 FilterChip(
                     selected = rx.validUntil != null,
-                    onClick = { },
+                    onClick = {
+                        rx = if (rx.validUntil == null) {
+                            rx.copy(validUntil = Dates.toEpochDay(LocalDate.now().plusDays(30)), validDays = null)
+                        } else {
+                            rx.copy(validUntil = null)
+                        }
+                    },
                     label = { Text("точно до ${rx.validUntil?.let { Dates.formatShort(it) } ?: "…"}") },
                 )
             }

@@ -154,7 +154,13 @@ object DailyCheck {
         if (settings.lastNotifiedDay == todayEpoch) return
 
         val events = compute(container, today)
-        if (events.lowStock.isEmpty() && events.rxBelow.isEmpty()) {
+        // Напоминание о копиях: не было дольше 7 дней (п. 9.4)
+        val backupReminder = if (settings.lastBackupAt > 0 &&
+            System.currentTimeMillis() - settings.lastBackupAt > 7L * 24 * 3600 * 1000
+        ) {
+            listOf("Резервная копия не создавалась более 7 дней")
+        } else emptyList()
+        if (events.lowStock.isEmpty() && events.rxBelow.isEmpty() && backupReminder.isEmpty()) {
             container.settings.setLastNotifiedDay(todayEpoch)
             return
         }
@@ -168,7 +174,7 @@ object DailyCheck {
                 NotificationChannel(CHANNEL_ID, "Напоминания о запасах", NotificationManager.IMPORTANCE_HIGH),
             )
         }
-        val lines = (events.lowStock + events.rxBelow)
+        val lines = (events.lowStock + events.rxBelow + backupReminder)
         val open = Intent(context, MainActivity::class.java).apply {
             putExtra("openUrgent", true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
