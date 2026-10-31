@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Matrix
+import android.util.Log
 import com.googlecode.tesseract.android.TessBaseAPI
 import java.io.File
 import java.io.FileOutputStream
@@ -14,6 +15,8 @@ import java.io.FileOutputStream
  * Фото не покидает устройство. Результат — черновик, который подтверждает человек (п. 6.4).
  */
 object OcrEngine {
+
+    private const val TAG = "OcrEngine"
 
     /** Извлечённые черновые поля рецепта (п. 6.3). */
     data class Draft(
@@ -70,13 +73,35 @@ object OcrEngine {
         val existing = initialized
         if (existing != null && initializedLang == lang) return existing
         existing?.recycle()
-        val tess = TessBaseAPI()
-        check(tess.init(dataPath, lang)) { "Не удалось инициализировать распознавание" }
+        val tess: TessBaseAPI
+        try {
+            // System.loadLibrary в статической инициализации TessBaseAPI может бросить
+            // ExceptionInInitializerError (например, несовместимые 16КБ-страницы прошивки)
+            tess = TessBaseAPI()
+            check(tess.init(dataPath, lang)) { "Не удалось инициализировать распознавание" }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Tesseract init failed: dataPath=$dataPath lang=$lang", e)
+            throw IllegalStateException(friendlyError(e))
+        }
         tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
         tess.setVariable("user_defined_dpi", "300")
         initialized = tess
         initializedLang = lang
         return tess
+    }
+
+    /**
+     * Человекочитаемое описание сбоя распознавания: любая ошибка нативного движка
+     * (в т.ч. Error-типы, которые catch(Exception) не ловит) превращается в текст
+     * для диалога вместо краша приложения.
+     */
+    fun friendlyError(e: Throwable): String = when (e) {
+        is UnsatisfiedLinkError, is ExceptionInInitializerError ->
+            "Модуль распознавания не загрузился на этом устройстве (${e.javaClass.simpleName}: ${e.message})"
+        is OutOfMemoryError ->
+            "Не хватило памяти для распознавания. Закройте другие приложения и попробуйте снова"
+        is StackOverflowError -> "Внутренняя ошибка распознавания (StackOverflow)"
+        else -> e.message ?: "Не удалось инициализировать распознавание"
     }
 
     /** Распознавание фото: предобработка → Tesseract → разбор полей. */
@@ -97,11 +122,13 @@ object OcrEngine {
     fun recognizeBitmap(context: Context, source: Bitmap): Draft {
         val tess = api(context)
         var bestText = runTess(tess, source)
+        Log.i(TAG, "ocr ${source.width}x${source.height}: score=${scoreText(bestText)} chars=${bestText.length}")
         if (scoreText(bestText) < MIN_TEXT_SCORE) {
             for (angle in intArrayOf(90, 270, 180)) {
                 val rotated = rotate(source, angle) ?: continue
                 val text = runTess(tess, rotated)
                 rotated.recycle()
+                Log.i(TAG, "ocr rotated $angle: score=${scoreText(text)}")
                 if (scoreText(text) > scoreText(bestText)) bestText = text
                 if (scoreText(bestText) >= MIN_TEXT_SCORE) break
             }

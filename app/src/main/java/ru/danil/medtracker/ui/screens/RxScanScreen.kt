@@ -134,7 +134,15 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
             state.value = state.value.copy(ocrRunning = true, error = null)
             try {
                 val draft = withContext(Dispatchers.Default) {
-                    OcrEngine.recognize(context, PhotoStore.file(context, rel))
+                    try {
+                        OcrEngine.recognize(context, PhotoStore.file(context, rel))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        //нативные сбои — Error, а не Exception: без перехвата приложение крашится
+                        android.util.Log.e("RxScan", "OCR failed", e)
+                        throw IllegalStateException(OcrEngine.friendlyError(e))
+                    }
                 }
                 applyDraft(draft)
             } catch (e: Exception) {

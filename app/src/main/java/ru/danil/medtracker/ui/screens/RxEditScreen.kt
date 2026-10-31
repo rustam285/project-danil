@@ -121,7 +121,15 @@ class RxEditViewModel(private val container: AppContainer) : ViewModel() {
             error.value = null
             try {
                 val draft = withContext(Dispatchers.Default) {
-                    OcrEngine.recognize(context, PhotoStore.file(context, photos.first()))
+                    try {
+                        OcrEngine.recognize(context, PhotoStore.file(context, photos.first()))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        //нативные сбои — Error, а не Exception: без перехвата приложение крашится
+                        android.util.Log.e("RxEdit", "OCR failed", e)
+                        throw IllegalStateException(OcrEngine.friendlyError(e))
+                    }
                 }
                 onDraft(draft)
             } catch (e: Exception) {
