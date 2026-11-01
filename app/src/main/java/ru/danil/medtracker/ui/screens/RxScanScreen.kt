@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -58,8 +61,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.danil.medtracker.calc.CalcService
+import ru.danil.medtracker.calc.IssuePreview
+import ru.danil.medtracker.calc.SupplyOutcome
 import ru.danil.medtracker.data.AppContainer
+import ru.danil.medtracker.data.RxDupCheck
+import ru.danil.medtracker.data.RxIssuePlan
 import ru.danil.medtracker.data.db.Drug
+import ru.danil.medtracker.data.db.DrugKind
 import ru.danil.medtracker.data.db.Patient
 import ru.danil.medtracker.data.db.Prescription
 import ru.danil.medtracker.data.db.Rx
@@ -68,7 +77,9 @@ import ru.danil.medtracker.ocr.PhotoStore
 import ru.danil.medtracker.ocr.TextMatch
 import ru.danil.medtracker.ui.DatePickerField
 import ru.danil.medtracker.ui.EmptyState
+import ru.danil.medtracker.ui.IntField
 import ru.danil.medtracker.ui.appViewModel
+import ru.danil.medtracker.ui.color
 import ru.danil.medtracker.util.Dates
 import java.io.File
 import java.time.LocalDate
@@ -99,6 +110,41 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         val saved: Boolean = false,
         val savedPrescriptionId: Long? = null,
         val savedRxId: Long? = null,
+        // ── Ф13.7 «Сохранить и выдать» ──
+        /** «Количество единиц» из бланка (правится вручную) */
+        val units: Int? = null,
+        /** «№ в упаковке» из строки Dtd (правится вручную) */
+        val packSize: Int? = null,
+        /** отсроченное обеспечение: штамп OCR + ручной тумблер */
+        val deferred: Boolean = false,
+        /** диалог сверки перед выдачей (непустой = показан) */
+        val confirm: ConfirmData? = null,
+        /** финальный диалог после выдачи (непустой = показан) */
+        val issued: IssuedData? = null,
+    )
+
+    /** Данные диалога сверки (Ф13.7 §8): план, предпросмотр, предупреждения дубль-проверки. */
+    data class ConfirmData(
+        val plan: RxIssuePlan.Plan,
+        val previewUntil: LocalDate?,
+        val previewUnlimited: Boolean,
+        val thresholdDays: Int,
+        /** предупреждения вне плана: пустые серия/номер, дубль у другого пациента */
+        val extraWarnings: List<String>,
+        /** рецепт, готовый к issueFromRx (id != 0 — переиспользуемый дубль) */
+        val rx: Rx,
+        val prescriptionId: Long,
+        val piecesPerPack: Int,
+    )
+
+    /** Данные финального диалога (Ф13.7 §8). */
+    data class IssuedData(
+        val issueId: Long,
+        val rxId: Long,
+        val prescriptionId: Long,
+        val until: LocalDate?,
+        val unlimited: Boolean,
+        val noCalc: Boolean,
     )
 
     val state = MutableStateFlow(ScanState())
@@ -171,6 +217,10 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
             issueDate = draft.issueDate?.let { Dates.parseFlexible(it) },
             validDays = draft.validDays,
             patient = matchedPatient,
+            // Ф13.7 §8: поля «Сохранить и выдать» предзаполнены OCR, правятся вручную
+            units = draft.unitsCount,
+            packSize = draft.packSize,
+            deferred = draft.deferred,
             report = if (draft.rawText.length < 20) {
                 "Текст не распознан. Переснимите бланк ближе, при хорошем свете и без наклона — или заполните поля вручную."
             } else {
@@ -238,7 +288,40 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val t = System.currentTimeMillis()
             val id = repo.drugDao.insert(drug.copy(updatedAt = t))
-            onCreated(drug.copy(id = id, updatedAt = t))
+            val created = drug.copy(id = id, updatedAt = t)
+            // новая позиция сразу видна в чипах назначений и в подборе (Ф13.7)
+            state.value = state.value.copy(drugsById = state.value.drugsById + (id to created))
+            onCreated(created)
+        }
+    }
+
+    /** Дубликат названия препарата (п. 5.9) — предупреждение в диалоге создания. */
+    val duplicateWarning = MutableStateFlow<String?>(null)
+
+    fun checkDuplicate(name: String) {
+        viewModelScope.launch {
+            val dup = repo.findDuplicateDrug(name)
+            duplicateWarning.value = dup?.let { "Похожий препарат уже есть: «${it.name}». Сохранить всё равно?" }
+        }
+    }
+
+    /** Создание назначения на месте (Ф13.7 §8): препарат + обязательная норма; новое назначение выбирается. */
+    fun createPrescription(patientId: Long, drug: Drug, normDraft: NormDraft) {
+        viewModelScope.launch {
+            try {
+                val t = System.currentTimeMillis()
+                val pid = repo.prescriptionDao.insert(
+                    Prescription(patientId = patientId, drugId = drug.id, createdAt = t, updatedAt = t),
+                )
+                repo.normDao.insert(normDraft.toNorm(pid, t))
+                val drugs = state.value.drugsById.ifEmpty {
+                    repo.drugDao.all().filter { !it.archived }.associateBy { it.id }
+                }
+                val newSt = loadPrescriptions(state.value, patientId, state.value.draft, drugs)
+                state.value = newSt.copy(prescriptionId = pid)
+            } catch (e: Exception) {
+                state.value = state.value.copy(error = e.message ?: "Не удалось создать назначение")
+            }
         }
     }
 
@@ -256,6 +339,18 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setValidDays(d: Int?) {
         state.value = state.value.copy(validDays = d)
+    }
+
+    fun setUnits(v: Int?) {
+        state.value = state.value.copy(units = v)
+    }
+
+    fun setPackSize(v: Int?) {
+        state.value = state.value.copy(packSize = v)
+    }
+
+    fun setDeferred(v: Boolean) {
+        state.value = state.value.copy(deferred = v)
     }
 
     fun selectPatient(p: Patient) {
@@ -321,6 +416,163 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         state.value = ScanState()
     }
 
+    // ── Ф13 «Сохранить и выдать» (ТЗ 1.4.0 §7–8) ──────────────────────────────
+
+    /**
+     * Кнопка «Сохранить и выдать»: собрать план (RxIssuePlan), дубль-проверку
+     * (RxDupCheck) и предпросмотр «обеспечен до» на чтение (IssuePreview) —
+     * в диалог сверки. Автовыдачи нет: выдаёт только confirmIssue по кнопке.
+     */
+    fun prepareIssue() {
+        val st = state.value
+        val patient = st.patient ?: return
+        val prescriptionId = st.prescriptionId ?: return
+        viewModelScope.launch {
+            try {
+                val prescription = st.prescriptions.firstOrNull { it.id == prescriptionId }
+                val drug = prescription?.let { st.drugsById[it.drugId] }
+                if (prescription == null || drug == null) {
+                    state.value = state.value.copy(error = "Назначение не найдено")
+                    return@launch
+                }
+                val today = Dates.today()
+
+                // дубль-проверка по серии/номеру (Ф13.5): нормализация и guard — в RxDupCheck
+                val dups = if (RxDupCheck.normSeries(st.series).isBlank() || RxDupCheck.normNumber(st.number).isBlank()) {
+                    emptyList()
+                } else {
+                    repo.rxDao.bySeriesNumber(RxDupCheck.normSeries(st.series), RxDupCheck.normNumber(st.number))
+                        .map { rx ->
+                            val issues = repo.issueDao.forRx(rx.id)
+                            RxDupCheck.Dup(
+                                rx = rx,
+                                patientFio = repo.patientDao.byId(rx.patientId)?.fio ?: "—",
+                                hasIssues = issues.isNotEmpty(),
+                                firstIssueDate = issues.minOfOrNull { Dates.fromEpochDay(it.date) },
+                            )
+                        }
+                }
+                val dupResult = RxDupCheck.check(patient.id, st.series, st.number, dups)
+                val extraWarnings = mutableListOf<String>()
+                var reuse: Rx? = null
+                when (dupResult) {
+                    is RxDupCheck.Result.Skip -> extraWarnings += dupResult.warning
+                    is RxDupCheck.Result.Found -> {
+                        reuse = dupResult.reuse
+                        dupResult.otherPatientWarning?.let { extraWarnings += it }
+                    }
+                    RxDupCheck.Result.None -> Unit
+                }
+
+                val issues = repo.issueDao.forPrescription(prescriptionId)
+                val norms = repo.normDao.forPrescription(prescriptionId)
+                val laterIssueDate = st.issueDate?.let { rd ->
+                    issues.map { Dates.fromEpochDay(it.date) }.filter { it.isAfter(rd) }.minOrNull()
+                }
+                // в ScanState точной даты «действителен до» нет — вычисляем (§5 ТЗ 1.4.0)
+                val validUntil = CalcService.rxValidUntil(
+                    st.issueDate?.let { Dates.toEpochDay(it) }, st.validDays, null,
+                )
+                val plan = RxIssuePlan.build(
+                    RxIssuePlan.Input(
+                        units = st.units, packSize = st.packSize, drugPiecesPerPack = drug.piecesPerPack,
+                        rxDate = st.issueDate, today = today, validUntil = validUntil,
+                        deferred = st.deferred,
+                        existingIssueDate = (dupResult as? RxDupCheck.Result.Found)?.existingIssueDate,
+                        laterIssueDate = laterIssueDate,
+                    ),
+                )
+
+                // предпросмотр на чтение (Ф10), только когда план имеет смысл
+                var previewUntil: LocalDate? = null
+                var previewUnlimited = false
+                if (plan.total > 0 && st.issueDate != null && !CalcService.isNoCalc(norms, today)) {
+                    val res = IssuePreview.afterIssue(issues, norms, drug, null, st.issueDate!!, plan.total)
+                    previewUntil = res.coveredUntil()
+                    previewUnlimited = res.outcome is SupplyOutcome.Unlimited
+                }
+
+                val t = System.currentTimeMillis()
+                val rx = Rx(
+                    id = reuse?.id ?: 0L,
+                    patientId = patient.id,
+                    prescriptionId = prescriptionId,
+                    series = st.series.trim(),
+                    number = st.number.trim(),
+                    issueDate = st.issueDate?.let { Dates.toEpochDay(it) },
+                    validDays = st.validDays,
+                    status = "ISSUED",
+                    ocrText = st.draft?.rawText?.takeIf { it.isNotBlank() },
+                    photoPaths = Rx.photosToJson(listOfNotNull(st.photoPath)),
+                    createdAt = reuse?.createdAt ?: t,
+                    updatedAt = t,
+                )
+                state.value = state.value.copy(
+                    confirm = ConfirmData(
+                        plan = plan,
+                        previewUntil = previewUntil,
+                        previewUnlimited = previewUnlimited,
+                        thresholdDays = container.settings.current().drugThresholdDays,
+                        extraWarnings = extraWarnings,
+                        rx = rx,
+                        prescriptionId = prescriptionId,
+                        piecesPerPack = drug.piecesPerPack,
+                    ),
+                )
+            } catch (e: Exception) {
+                state.value = state.value.copy(error = e.message ?: "Не удалось подготовить выдачу")
+            }
+        }
+    }
+
+    /** Подтверждение в диалоге сверки: транзакция issueFromRx (REDEEMED) + фактический «обеспечен до». */
+    fun confirmIssue() {
+        val c = state.value.confirm ?: return
+        viewModelScope.launch {
+            try {
+                val issue = repo.issueFromRx(c.rx, c.prescriptionId, c.plan, c.piecesPerPack)
+                val prescription = repo.prescriptionDao.byId(c.prescriptionId)
+                val drug = prescription?.let { repo.drugDao.byId(it.drugId) }
+                val issues = repo.issueDao.forPrescription(c.prescriptionId)
+                val norms = repo.normDao.forPrescription(c.prescriptionId)
+                val res = CalcService.supplyFor(issues, norms, drug)
+                state.value = state.value.copy(
+                    confirm = null,
+                    issued = IssuedData(
+                        issueId = issue.id,
+                        rxId = issue.rxId ?: c.rx.id,
+                        prescriptionId = c.prescriptionId,
+                        until = res.coveredUntil(),
+                        unlimited = res.outcome is SupplyOutcome.Unlimited,
+                        noCalc = CalcService.isNoCalc(norms),
+                    ),
+                )
+            } catch (e: Exception) {
+                state.value = state.value.copy(confirm = null, error = e.message ?: "Не удалось сохранить выдачу")
+            }
+        }
+    }
+
+    /**
+     * «Отменить выдачу» (§7): удалить выдачу (+tombstone), вернуть «выписан», если
+     * других выдач по рецепту нет. Форма скана остаётся — поля можно поправить и повторить.
+     */
+    fun undoIssue() {
+        val d = state.value.issued ?: return
+        viewModelScope.launch {
+            try {
+                repo.undoIssueFromRx(d.issueId, d.rxId)
+                state.value = state.value.copy(issued = null)
+            } catch (e: Exception) {
+                state.value = state.value.copy(error = e.message ?: "Не удалось отменить выдачу")
+            }
+        }
+    }
+
+    fun dismissConfirm() {
+        state.value = state.value.copy(confirm = null)
+    }
+
     fun dismissReport() {
         state.value = state.value.copy(report = null)
     }
@@ -346,6 +598,22 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         }
 
         /**
+         * Название для предзаполнения диалога позиции (Ф13.7 §8): строка после
+         * «Выписано Rp./Вр.», при пустой — первая распознанная строка препарата.
+         */
+        fun ocrPositionName(draft: OcrEngine.Draft?): String =
+            draft?.rpName?.takeIf { it.isNotBlank() } ?: draft?.drugLines?.firstOrNull() ?: ""
+
+        /**
+         * Эвристика вида «устройство» (Ф13.7 §8): слова-маркеры в форме выпуска
+         * или названии. Чистая функция — покрыта тестами.
+         */
+        fun deviceKindHint(formName: String?, name: String): Boolean {
+            val hay = "${formName ?: ""} $name".lowercase()
+            return listOf("полоск", "набор", "штрих", "шприц", "помп", "сенсор").any { hay.contains(it) }
+        }
+
+        /**
          * Автоподбор назначения (Ф1.3): единственный явный лидер — выбирается;
          * несколько с равным максимальным баллом (неоднозначность) — без автовыбора,
          * пользователь выбирает из чипов вручную. Чистая функция, покрыта тестами.
@@ -364,16 +632,21 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?) -> Unit) {
+fun RxScanScreen(
+    onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?) -> Unit,
+    onOpenPrescription: (Long) -> Unit,
+) {
     val vm = appViewModel { RxScanViewModel(it) }
     val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
     val patients by vm.patients.collectAsStateWithLifecycle()
+    val duplicateWarning by vm.duplicateWarning.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
     var viewPhoto by remember { mutableStateOf(false) }
     var showCreatePosition by remember { mutableStateOf(false) }
     var showCreatePatient by remember { mutableStateOf(false) }
+    var showNewPrescription by remember { mutableStateOf(false) }
     var showCameraRationale by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<Uri?>(null) }
 
@@ -475,6 +748,32 @@ fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?
                     }
                 }
 
+                // ── Выдача по рецепту (Ф13.7 §8): сверяется человеком, поля правятся ──
+                Text(
+                    "Выдача по рецепту",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IntField("Количество единиц", state.units, { vm.setUnits(it) }, Modifier.weight(1f))
+                    IntField("№ в упаковке", state.packSize, { vm.setPackSize(it) }, Modifier.weight(1f))
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Switch(checked = state.deferred, onCheckedChange = { vm.setDeferred(it) })
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text("Отсроченное обеспечение")
+                        Text(
+                            "Выдача запишется датой рецепта",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
                 // ── Пациент ──
                 Text(
                     "Пациент",
@@ -567,9 +866,18 @@ fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?
                             Text("+ Создать позицию в справочнике")
                         }
                     }
-                } else if (patient != null && state.prescriptions.isEmpty() && !state.draft?.drugLines.isNullOrEmpty()) {
-                    OutlinedButton(onClick = { showCreatePosition = true }, modifier = Modifier.padding(top = 8.dp)) {
-                        Text("+ Создать позицию в справочнике")
+                } else if (patient != null && state.prescriptions.isEmpty()) {
+                    Text(
+                        "Активных назначений нет — для выдачи по рецепту создайте назначение",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                // Ф13.7 §8: назначение на месте — препарат из справочника (или новый) + обязательная норма
+                if (patient != null) {
+                    OutlinedButton(onClick = { showNewPrescription = true }, modifier = Modifier.padding(top = 4.dp)) {
+                        Text("+ Новое назначение")
                     }
                 }
 
@@ -581,6 +889,12 @@ fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?
                     enabled = state.patient != null,
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 ) { Text("Сохранить рецепт") }
+                // Ф13.7 §8: вторая кнопка — сохраняет рецепт и выдаёт после сверки в диалоге
+                Button(
+                    onClick = { vm.prepareIssue() },
+                    enabled = state.patient != null && state.prescriptionId != null,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) { Text("Сохранить и выдать") }
             }
             Spacer(Modifier.height(32.dp))
         }
@@ -681,6 +995,112 @@ fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?
         )
     }
 
+    // Диалог сверки перед выдачей (Ф13.7 §8): обязателен — OCR ошибается, числа
+    // проходят ручную сверку; блокировки гасят кнопку «Выдать», предупреждения — нет
+    state.confirm?.let { c ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissConfirm() },
+            title = { Text("Выдать по рецепту?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "${state.units ?: "—"} × №${state.packSize ?: "—"} = ${c.plan.total} шт, " +
+                            "дата ${state.issueDate?.let { Dates.formatRu(it) } ?: "—"}",
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (c.previewUnlimited) {
+                        Text(
+                            "После этой выдачи: запас более 5 лет",
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else c.previewUntil?.let { until ->
+                        Text(
+                            "После этой выдачи: обеспечен до ${Dates.formatRu(until)}",
+                            fontWeight = FontWeight.SemiBold,
+                            color = CalcService.level(until, c.thresholdDays).color(),
+                        )
+                    }
+                    if (c.plan.blocks.isNotEmpty()) {
+                        Text(
+                            "Выдача невозможна:",
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        c.plan.blocks.forEach {
+                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    (c.extraWarnings + c.plan.warnings).forEach {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = c.plan.blocks.isEmpty(), onClick = { vm.confirmIssue() }) { Text("Выдать") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissConfirm() }) { Text("Отмена") }
+            },
+        )
+    }
+
+    // Финальный диалог (Ф13.7 §8): результат + «Готово» / «К назначению» / «Отменить выдачу»
+    state.issued?.let { d ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Выдано") },
+            text = {
+                Text(
+                    when {
+                        d.noCalc -> "Записано в журнал. Назначение без расчёта срока."
+                        d.unlimited -> "Обеспечен до: запас более 5 лет"
+                        d.until != null -> "Обеспечен до ${Dates.formatRu(d.until)}"
+                        else -> "Записано в журнал."
+                    },
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.reset() }) { Text("Готово") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        val pid = d.prescriptionId
+                        vm.reset()
+                        onOpenPrescription(pid)
+                    }) { Text("К назначению") }
+                    TextButton(onClick = { vm.undoIssue() }) {
+                        Text("Отменить выдачу", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+        )
+    }
+
+    // Создание назначения на месте (Ф13.7 §8): позиция + обязательная норма,
+    // validFrom = дата рецепта (редактируемая), Signa — подсказкой над формой
+    if (showNewPrescription && state.patient != null) {
+        NewPrescriptionDialog(
+            drugs = state.drugsById.values.sortedBy { it.name },
+            initialValidFrom = state.issueDate,
+            signa = state.draft?.signa,
+            initialName = RxScanViewModel.ocrPositionName(state.draft),
+            initialPackSize = state.packSize,
+            initialFormName = state.draft?.formName,
+            duplicateWarning = duplicateWarning,
+            onCheckDuplicate = { vm.checkDuplicate(it) },
+            onCreateDrug = { draft, onCreated -> vm.createDrug(draft, onCreated) },
+            onSave = { drug, normDraft ->
+                val patientId = state.patient?.id ?: return@NewPrescriptionDialog
+                showNewPrescription = false
+                vm.createPrescription(patientId, drug, normDraft)
+            },
+            onDismiss = { showNewPrescription = false },
+        )
+    }
+
     // Полноэкранный просмотр снимка с повторным распознаванием (Ф1.1, Ф1.2)
     if (viewPhoto && state.photoPath != null) {
         ru.danil.medtracker.ui.PhotoViewer(
@@ -692,15 +1112,188 @@ fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?
         )
     }
 
-    // Быстрое создание позиции (Ф1.3): вид «препарат/устройство» — как у пациента, на месте
+    // Быстрое создание позиции (Ф1.3): вид «препарат/устройство» — как у пациента, на месте.
+    // Ф13.7 §8: предзаполнено названием из OCR, «№» упаковки и видом по эвристике
     if (showCreatePosition) {
+        val ocrName = RxScanViewModel.ocrPositionName(state.draft)
         DrugCreateDialog(
-            duplicateWarning = null,
-            onCheckDuplicate = { },
+            duplicateWarning = duplicateWarning,
+            onCheckDuplicate = { vm.checkDuplicate(it) },
+            initialName = ocrName,
+            initialPiecesPerPack = state.packSize,
+            initialKind = if (RxScanViewModel.deviceKindHint(state.draft?.formName, ocrName)) {
+                DrugKind.DEVICE
+            } else DrugKind.DRUG,
             onCreate = { draft ->
                 vm.createDrug(draft) { showCreatePosition = false }
             },
             onDismiss = { showCreatePosition = false },
+        )
+    }
+}
+
+/**
+ * Создание назначения на месте (Ф13.7 §8): позиция из справочника или новая
+ * (предзаполненная из OCR), затем обязательная форма нормы с validFrom = дата
+ * рецепта (редактируемая); Signa из рецепта — подсказкой над формой. Выдача
+ * возможна только после сохранённой нормы — «Сохранить» проверяет норму.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NewPrescriptionDialog(
+    drugs: List<Drug>,
+    initialValidFrom: LocalDate?,
+    signa: String?,
+    initialName: String,
+    initialPackSize: Int?,
+    initialFormName: String?,
+    duplicateWarning: String?,
+    onCheckDuplicate: (String) -> Unit,
+    onCreateDrug: (Drug, onCreated: (Drug) -> Unit) -> Unit,
+    onSave: (Drug, NormDraft) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selectedDrug by remember { mutableStateOf<Drug?>(null) }
+    var showDrugSelect by remember { mutableStateOf(false) }
+    var showDrugCreate by remember { mutableStateOf(false) }
+    var norm by remember { mutableStateOf(NormDraft(validFrom = initialValidFrom ?: Dates.today())) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Новое назначение") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                signa?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        "Signa из рецепта: $it",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedTextField(
+                    value = selectedDrug?.let {
+                        "${it.name}${if (it.isDevice) " (устройство)" else ""} — ${CalcService.drugForm(it)}"
+                    } ?: "",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(if (selectedDrug == null) "Позиция (выберите или создайте)" else "Позиция") },
+                    trailingIcon = { TextButton(onClick = { showDrugSelect = true }) { Text("Выбрать") } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Норма выдачи (обязательна)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                DatePickerField("Действует с", norm.validFrom, { norm = norm.copy(validFrom = it ?: Dates.today()) }, Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = norm.kind == NormDraft.NormKind.PER_DAY, onClick = { norm = norm.copy(kind = NormDraft.NormKind.PER_DAY) }, label = { Text("шт/день") })
+                    FilterChip(selected = norm.kind == NormDraft.NormKind.PER_MONTH, onClick = { norm = norm.copy(kind = NormDraft.NormKind.PER_MONTH) }, label = { Text("шт/мес") })
+                    FilterChip(selected = norm.kind == NormDraft.NormKind.PER_YEAR, onClick = { norm = norm.copy(kind = NormDraft.NormKind.PER_YEAR) }, label = { Text("шт/год") })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = norm.kind == NormDraft.NormKind.EVERY_X_DAYS, onClick = { norm = norm.copy(kind = NormDraft.NormKind.EVERY_X_DAYS) }, label = { Text("раз в N дней") })
+                    FilterChip(selected = norm.kind == NormDraft.NormKind.ME, onClick = { norm = norm.copy(kind = NormDraft.NormKind.ME) }, label = { Text("МЕ/сутки") })
+                    FilterChip(selected = norm.kind == NormDraft.NormKind.NO_CALC, onClick = { norm = norm.copy(kind = NormDraft.NormKind.NO_CALC) }, label = { Text("без срока") })
+                }
+                when (norm.kind) {
+                    NormDraft.NormKind.EVERY_X_DAYS -> Row {
+                        IntField("Кол-во, шт", norm.amount, { norm = norm.copy(amount = it) }, Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        IntField("Период, дней", norm.everyXDays, { norm = norm.copy(everyXDays = it) }, Modifier.weight(1f))
+                    }
+                    NormDraft.NormKind.ME -> {
+                        IntField("МЕ (ЕД) в сутки", norm.meAmount, { norm = norm.copy(meAmount = it) }, Modifier.fillMaxWidth())
+                        if (selectedDrug?.mePerPiece() == null) {
+                            Text(
+                                "Для МЕ-нормы задайте позиции концентрацию МЕ/мл и объём",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    NormDraft.NormKind.NO_CALC -> Text(
+                        "Резерв / разовые выдачи: ведётся только журнал выдач, срок не считается",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    else -> IntField("Количество, шт", norm.amount, { norm = norm.copy(amount = it) }, Modifier.fillMaxWidth())
+                }
+                localError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = selectedDrug != null,
+                onClick = {
+                    localError = when {
+                        selectedDrug == null -> "Выберите позицию"
+                        !norm.isValid -> "Заполните норму"
+                        norm.kind == NormDraft.NormKind.ME && selectedDrug?.mePerPiece() == null ->
+                            "Позиции не заданы концентрация и объём для МЕ-нормы"
+                        else -> null
+                    }
+                    if (localError == null) onSave(selectedDrug!!, norm)
+                },
+            ) { Text("Сохранить") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
+
+    if (showDrugSelect) {
+        AlertDialog(
+            onDismissRequest = { showDrugSelect = false },
+            title = { Text("Позиция") },
+            text = {
+                if (drugs.isEmpty()) {
+                    Text("Справочник пуст — создайте первую позицию")
+                } else {
+                    LazyColumn(Modifier.fillMaxWidth().height(320.dp)) {
+                        items(drugs.size) { idx ->
+                            val drug = drugs[idx]
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedDrug = drug; showDrugSelect = false }
+                                    .padding(10.dp),
+                            ) {
+                                Text(drug.name)
+                                if (drug.isDevice) {
+                                    Text(
+                                        "устройство",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDrugSelect = false; showDrugCreate = true }) { Text("+ Создать новую") }
+            },
+            dismissButton = { TextButton(onClick = { showDrugSelect = false }) { Text("Отмена") } },
+        )
+    }
+
+    if (showDrugCreate) {
+        DrugCreateDialog(
+            duplicateWarning = duplicateWarning,
+            onCheckDuplicate = onCheckDuplicate,
+            initialName = initialName,
+            initialPiecesPerPack = initialPackSize,
+            initialKind = if (RxScanViewModel.deviceKindHint(initialFormName, initialName)) {
+                DrugKind.DEVICE
+            } else DrugKind.DRUG,
+            onCreate = { draft ->
+                onCreateDrug(draft) { created ->
+                    selectedDrug = created
+                    showDrugCreate = false
+                }
+            },
+            onDismiss = { showDrugCreate = false },
         )
     }
 }

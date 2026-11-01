@@ -391,7 +391,10 @@ fun PrescriptionEditScreen(
     }
 }
 
-/** Диалог создания препарата (п. 3.2, 5.9). Чипы переносятся строками — не сжимаются (замечание №4). */
+/**
+ * Диалог создания препарата (п. 3.2, 5.9). Чипы переносятся строками — не сжимаются (замечание №4).
+ * Ф13.7 §8: предзаполнение из OCR — название, размер упаковки «№», вид «устройство» по эвристике.
+ */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun DrugCreateDialog(
@@ -399,12 +402,15 @@ fun DrugCreateDialog(
     onCheckDuplicate: (String) -> Unit,
     onCreate: (Drug) -> Unit,
     onDismiss: () -> Unit,
+    initialName: String = "",
+    initialPiecesPerPack: Int? = null,
+    initialKind: String = ru.danil.medtracker.data.db.DrugKind.DRUG,
 ) {
-    var name by remember { mutableStateOf("") }
-    var kind by remember { mutableStateOf(ru.danil.medtracker.data.db.DrugKind.DRUG) }
+    var name by remember { mutableStateOf(initialName) }
+    var kind by remember { mutableStateOf(initialKind) }
     var category by remember { mutableStateOf("Лекарство") }
     var unit by remember { mutableStateOf("упаковка") }
-    var piecesPerPack by remember { mutableStateOf("1") }
+    var piecesPerPack by remember { mutableStateOf(initialPiecesPerPack?.toString() ?: "1") }
     var concMe by remember { mutableStateOf("") }
     var volume by remember { mutableStateOf("") }
     var concPct by remember { mutableStateOf("") }

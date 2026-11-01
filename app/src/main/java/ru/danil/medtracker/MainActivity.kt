@@ -191,9 +191,12 @@ fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
                     )
                 }
                 composable(Routes.RX_SCAN) {
-                    RxScanScreen(onIssue = { pid, rxDate, rxId ->
-                        nav.navigate(Routes.issueEdit(pid, null, rxDate, rxId))
-                    })
+                    RxScanScreen(
+                        onIssue = { pid, rxDate, rxId ->
+                            nav.navigate(Routes.issueEdit(pid, null, rxDate, rxId))
+                        },
+                        onOpenPrescription = { nav.navigate(Routes.prescription(it)) },
+                    )
                 }
                 composable(Routes.SETTINGS) { SettingsScreen() }
                 composable(Routes.PATIENT) {
