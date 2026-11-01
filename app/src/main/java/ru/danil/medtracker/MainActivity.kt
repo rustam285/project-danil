@@ -45,6 +45,8 @@ import ru.danil.medtracker.ui.screens.RxScanScreen
 import ru.danil.medtracker.ui.screens.SettingsScreen
 import ru.danil.medtracker.ui.screens.UrgentScreen
 import ru.danil.medtracker.ui.screens.CopyPrescriptionsScreen
+import ru.danil.medtracker.ui.AutoSizeText
+import ru.danil.medtracker.ui.theme.LARGE_FONT_SCALE
 import ru.danil.medtracker.ui.theme.MedTrackerTheme
 
 object Routes {
@@ -92,7 +94,10 @@ class MainActivity : ComponentActivity() {
         val openUrgent = intent?.getBooleanExtra("openUrgent", false) == true
         val openAnalyses = intent?.getBooleanExtra("openAnalyses", false) == true
         setContent {
-            MedTrackerTheme {
+            // Крупный шрифт (Ф11): настройка применяется ко всему приложению через тему
+            val appSettings by (applicationContext as App).container.settings.settings
+                .collectAsStateWithLifecycle(initialValue = AppSettings())
+            MedTrackerTheme(fontScale = if (appSettings.largeFont) LARGE_FONT_SCALE else 1f) {
                 MedTrackerApp(startAtUrgent = openUrgent, startAtAnalyses = openAnalyses)
             }
         }
@@ -106,8 +111,8 @@ fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
     val nav = rememberNavController()
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
-    val onboardingDone = container.settings.settings
-        .collectAsStateWithLifecycle(initialValue = AppSettings()).value.onboardingDone
+    val appSettings by container.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
+    val onboardingDone = appSettings.onboardingDone
 
     // 5 вкладок (Ф3.1): Пациенты, Анализы, Срочное, Рецепт, Настройки
     val tabs = listOf(
@@ -138,7 +143,11 @@ fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
                                     }
                                 },
                                 icon = tab.icon,
-                                label = { Text(tab.label) },
+                                // Подписи вкладок: всегда в одну строку (автоуменьшение шрифта);
+                                // скрываются целиком настройкой (v1.3.0)
+                                label = if (appSettings.showTabLabels) {
+                                    { AutoSizeText(tab.label) }
+                                } else null,
                             )
                         }
                     }
@@ -175,6 +184,7 @@ fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
                     UrgentScreen(
                         onOpenPrescription = { nav.navigate(Routes.prescription(it)) },
                         onOpenRx = { patientId, _ -> nav.navigate(Routes.patient(patientId)) },
+                        onOpenIssueForm = { pid -> nav.navigate(Routes.issueEdit(pid, null)) },
                     )
                 }
                 composable(Routes.RX_SCAN) {

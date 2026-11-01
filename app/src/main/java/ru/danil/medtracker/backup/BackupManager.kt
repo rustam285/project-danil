@@ -91,6 +91,9 @@ class BackupManager(private val container: AppContainer, private val context: Co
                     analysisTimeMinutes = s.analysisTimeMinutes,
                     drugThresholdDays = s.drugThresholdDays,
                     rxThresholdDays = s.rxThresholdDays,
+                    backupReminderDays = s.backupReminderDays,
+                    largeFont = s.largeFont,
+                    showTabLabels = s.showTabLabels,
                 ),
             )
             buildZip(
@@ -387,6 +390,9 @@ class BackupManager(private val container: AppContainer, private val context: Co
             setAnalysisTime(restored.analysisTimeMinutes)
             setDrugThreshold(restored.drugThresholdDays)
             setRxThreshold(restored.rxThresholdDays)
+            setBackupReminderDays(restored.backupReminderDays)
+            setLargeFont(restored.largeFont)
+            setShowTabLabels(restored.showTabLabels)
         }
         settings.markFullBackup(full.manifest.fullId, full.manifest.createdAt)
         // Будильники перепланируются под восстановленное время (Ф5.3.5, Ф3.7 п.6)

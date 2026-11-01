@@ -39,6 +39,12 @@ data class AppSettings(
     /** patientId → epochDay последнего напоминания «нет данных» (Ф3.7 п.2: не чаще раза в 7 дней). Служебное, в копию не входит. */
     val analysisNoDataRemindedJson: String = "{}",
     val hyperOsHintShown: Boolean = false,
+    /** Порог напоминания о давности копии, дней; 0 = не напоминать (Ф8). Переносимая — входит в копию. */
+    val backupReminderDays: Int = 14,
+    /** Крупный шрифт для всего приложения (Ф11). Переносимая — входит в копию. */
+    val largeFont: Boolean = false,
+    /** Подписи под значками нижних вкладок (доп. пожелание к v1.3.0). Переносимая — входит в копию. */
+    val showTabLabels: Boolean = true,
 )
 
 class SettingsStore(private val context: Context) {
@@ -59,6 +65,9 @@ class SettingsStore(private val context: Context) {
         val ANALYSIS_NOTIFIED_DAY = longPreferencesKey("analysis_notified_day")
         val ANALYSIS_NODATA_REMINDED = stringPreferencesKey("analysis_nodata_reminded")
         val HYPEROS_SHOWN = booleanPreferencesKey("hyperos_shown")
+        val BACKUP_REMINDER_DAYS = intPreferencesKey("backup_reminder_days")
+        val LARGE_FONT = booleanPreferencesKey("large_font")
+        val SHOW_TAB_LABELS = booleanPreferencesKey("show_tab_labels")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -78,6 +87,9 @@ class SettingsStore(private val context: Context) {
             lastAnalysisNotifiedDay = p[Keys.ANALYSIS_NOTIFIED_DAY] ?: 0,
             analysisNoDataRemindedJson = p[Keys.ANALYSIS_NODATA_REMINDED] ?: "{}",
             hyperOsHintShown = p[Keys.HYPEROS_SHOWN] ?: false,
+            backupReminderDays = p[Keys.BACKUP_REMINDER_DAYS] ?: 14,
+            largeFont = p[Keys.LARGE_FONT] ?: false,
+            showTabLabels = p[Keys.SHOW_TAB_LABELS] ?: true,
         )
     }
 
@@ -89,6 +101,9 @@ class SettingsStore(private val context: Context) {
     suspend fun setAnalysisTime(minutes: Int) = context.dataStore.edit { it[Keys.ANALYSIS_TIME] = minutes }
     suspend fun setDrugThreshold(days: Int) = context.dataStore.edit { it[Keys.DRUG_THRESHOLD] = days }
     suspend fun setRxThreshold(days: Int) = context.dataStore.edit { it[Keys.RX_THRESHOLD] = days }
+    suspend fun setBackupReminderDays(days: Int) = context.dataStore.edit { it[Keys.BACKUP_REMINDER_DAYS] = days }
+    suspend fun setLargeFont(v: Boolean) = context.dataStore.edit { it[Keys.LARGE_FONT] = v }
+    suspend fun setShowTabLabels(v: Boolean) = context.dataStore.edit { it[Keys.SHOW_TAB_LABELS] = v }
     suspend fun setBackupTree(uri: String) = context.dataStore.edit { it[Keys.BACKUP_TREE] = uri }
     suspend fun setBackupTime(minutes: Int) = context.dataStore.edit { it[Keys.BACKUP_TIME] = minutes }
     suspend fun setHyperOsShown() = context.dataStore.edit { it[Keys.HYPEROS_SHOWN] = true }

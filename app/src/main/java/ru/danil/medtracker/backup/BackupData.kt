@@ -47,6 +47,12 @@ data class BackupSettings(
     val analysisTimeMinutes: Int = 8 * 60,
     val drugThresholdDays: Int = 7,
     val rxThresholdDays: Int = 14,
+    /** Порог напоминания о давности копии (Ф8), 0 = не напоминать */
+    val backupReminderDays: Int = 14,
+    /** Крупный шрифт (Ф11) */
+    val largeFont: Boolean = false,
+    /** Подписи под значками нижних вкладок */
+    val showTabLabels: Boolean = true,
 )
 
 @Serializable

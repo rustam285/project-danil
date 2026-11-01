@@ -6,6 +6,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 
 private val LightColors: ColorScheme = lightColorScheme(
@@ -36,12 +38,32 @@ object StatusColors {
     fun red() = MaterialTheme.colorScheme.error
 }
 
-/** Тема приложения: светлая/тёмная по системе (п. 11.4). */
+/** Коэффициент режима «крупный шрифт» (Ф11.1). */
+const val LARGE_FONT_SCALE = 1.25f
+
+/**
+ * Тема приложения: светлая/тёмная по системе (п. 11.4).
+ * [fontScale] — пользовательский масштаб шрифта (Ф11): применяется поверх системного
+ * через Density.fontScale, т.е. увеличиваются только размеры в sp (dp-вёрстка не трогается).
+ */
 @Composable
-fun MedTrackerTheme(content: @Composable () -> Unit) {
+fun MedTrackerTheme(fontScale: Float = 1f, content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    MaterialTheme(
-        colorScheme = if (dark) DarkColors else LightColors,
-        content = content,
-    )
+    val density = LocalDensity.current
+    val scaled = if (fontScale != 1f && fontScale > 0f) {
+        androidx.compose.ui.unit.Density(density.density, density.fontScale * fontScale)
+    } else null
+    if (scaled != null) {
+        CompositionLocalProvider(LocalDensity provides scaled) {
+            MaterialTheme(
+                colorScheme = if (dark) DarkColors else LightColors,
+                content = content,
+            )
+        }
+    } else {
+        MaterialTheme(
+            colorScheme = if (dark) DarkColors else LightColors,
+            content = content,
+        )
+    }
 }

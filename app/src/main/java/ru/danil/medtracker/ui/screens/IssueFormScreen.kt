@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.danil.medtracker.calc.CalcService
+import ru.danil.medtracker.calc.IssuePreview
 import ru.danil.medtracker.calc.SupplyEngine
 import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.ui.DatePickerField
@@ -52,6 +53,11 @@ class IssueFormViewModel(private val container: AppContainer) : ViewModel() {
         val drug: ru.danil.medtracker.data.db.Drug? = null,
         val existing: ru.danil.medtracker.data.db.Issue? = null,
         val rxs: List<ru.danil.medtracker.data.db.Rx> = emptyList(),
+        /** Нормы и история выдач — для предпросмотра «обеспечен до» (Ф10) */
+        val norms: List<ru.danil.medtracker.data.db.Norm> = emptyList(),
+        val issues: List<ru.danil.medtracker.data.db.Issue> = emptyList(),
+        /** Порог жёлтой зоны — цвет предпросмотра при дефиците (Ф10.2) */
+        val thresholdDays: Int = 7,
     )
 
     val state = MutableStateFlow(State())
@@ -64,7 +70,14 @@ class IssueFormViewModel(private val container: AppContainer) : ViewModel() {
             val p = repo.prescriptionDao.byId(prescriptionId)
             val drug = p?.let { repo.drugDao.byId(it.drugId) }
             val existing = issueId?.let { repo.issueDao.byId(it) }
-            state.value = State(p, drug, existing, p?.let { repo.rxDao.all().filter { r -> r.patientId == it.patientId } } ?: emptyList())
+            val norms = p?.let { repo.normDao.forPrescription(it.id) } ?: emptyList()
+            val issues = p?.let { repo.issueDao.forPrescription(it.id) } ?: emptyList()
+            val threshold = container.settings.current().drugThresholdDays
+            state.value = State(
+                p, drug, existing,
+                p?.let { repo.rxDao.all().filter { r -> r.patientId == it.patientId } } ?: emptyList(),
+                norms, issues, threshold,
+            )
         }
     }
 
@@ -209,6 +222,41 @@ fun IssueFormScreen(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
+            }
+
+            // Предпросмотр «обеспечен до» (Ф10): что покажет движок после сохранения
+            // этой выдачи; при дефиците — цвет дефицита (Ф10.2)
+            if (totalPieces > 0 && !dateInFuture && !CalcService.isNoCalc(state.norms, today)) {
+                val preview = remember(date, totalPieces, state.issues, state.norms, state.drug, existing?.id) {
+                    IssuePreview.afterIssue(
+                        issues = state.issues,
+                        norms = state.norms,
+                        drug = drug,
+                        replaceIssueId = existing?.id,
+                        newDate = date,
+                        newPieces = totalPieces,
+                    )
+                }
+                val previewUntil = preview.coveredUntil()
+                val previewText = if (preview.outcome is ru.danil.medtracker.calc.SupplyOutcome.Unlimited) {
+                    "После этой выдачи: запас более 5 лет"
+                } else {
+                    previewUntil?.let { "После этой выдачи: обеспечен до ${Dates.formatRu(it)}" }
+                }
+                if (previewText != null) {
+                    val level = CalcService.level(previewUntil, state.thresholdDays, today)
+                    Text(
+                        previewText,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = when (level) {
+                            ru.danil.medtracker.calc.Level.RED -> MaterialTheme.colorScheme.error
+                            ru.danil.medtracker.calc.Level.YELLOW -> androidx.compose.ui.graphics.Color(0xFFF9A825)
+                            ru.danil.medtracker.calc.Level.GREEN -> MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
             }
 
             OutlinedTextField(note, { note = it }, label = { Text("Примечание (необязательно)") }, modifier = Modifier.fillMaxWidth())

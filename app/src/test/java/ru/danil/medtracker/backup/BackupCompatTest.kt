@@ -71,6 +71,9 @@ class BackupCompatTest {
                 analysisTimeMinutes = 9 * 60,
                 drugThresholdDays = 10,
                 rxThresholdDays = 21,
+                backupReminderDays = 21,
+                largeFont = true,
+                showTabLabels = false,
             ),
         )
         val restored = BackupJson.decodeDb(BackupJson.encodeDb(db))
@@ -79,6 +82,23 @@ class BackupCompatTest {
         assertTrue(restored.patients.first().isDiabetic)
         assertTrue(restored.prescriptions.first().isReserve)
         assertEquals(21 * 60 + 30, restored.settings!!.checkTimeMinutes)
+        // настройки v1.3.0 (Ф8, Ф11, подписи вкладок) переживают круговой тест
+        assertEquals(21, restored.settings!!.backupReminderDays)
+        assertTrue(restored.settings!!.largeFont)
+        assertFalse(restored.settings!!.showTabLabels)
+    }
+
+    @Test
+    fun v120_settings_withoutNewFields_decodeWithDefaults() {
+        // блок settings копии v1.2.0 не содержит новых полей v1.3.0 — применяются дефолты
+        val v120Settings = """
+            {"notificationsEnabled": true, "checkTimeMinutes": 480, "analysisTimeMinutes": 480,
+             "drugThresholdDays": 7, "rxThresholdDays": 14}
+        """.trimIndent()
+        val s = BackupJson.json.decodeFromString(BackupSettings.serializer(), v120Settings)
+        assertEquals(14, s.backupReminderDays)
+        assertFalse(s.largeFont)
+        assertTrue(s.showTabLabels)
     }
 
     @Test

@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import ru.danil.medtracker.calc.Level
 import ru.danil.medtracker.util.Dates
 import java.time.Instant
@@ -253,5 +254,44 @@ fun LabeledRow(label: String, value: String?) {
     Row(Modifier.padding(vertical = 2.dp)) {
         Text("$label: ", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * Текст строго в одну строку: если не влезает в ширину — шрифт плавно уменьшается
+ * (подписи нижних вкладок не переносятся и не сжимаются, v1.3.0).
+ */
+@Composable
+fun AutoSizeText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
+) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val maxWidth = constraints.maxWidth
+        val fontSize = androidx.compose.runtime.remember(text, maxWidth, density, style) {
+            var size = style.fontSize
+            if (maxWidth > 0) {
+                while (size > 8.sp) {
+                    val layout = measurer.measure(
+                        androidx.compose.ui.text.AnnotatedString(text),
+                        style.copy(fontSize = size),
+                    )
+                    if (layout.size.width <= maxWidth) break
+                    size *= 0.9f
+                }
+            }
+            size
+        }
+        Text(
+            text,
+            color = color,
+            style = style.copy(fontSize = fontSize),
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Clip,
+        )
     }
 }
