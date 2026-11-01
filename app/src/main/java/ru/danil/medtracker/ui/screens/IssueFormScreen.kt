@@ -142,6 +142,8 @@ fun IssueFormScreen(
     prescriptionId: Long,
     issueId: Long?,
     defaultDate: Long? = null,
+    /** Предвыбранный рецепт из скан-потока (Ф13.5 §6.3): чип включён сразу, авто-«отоварен» сработает при сохранении. */
+    preselectRxId: Long? = null,
     onSaved: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -166,7 +168,9 @@ fun IssueFormScreen(
     var packs by remember(existing) { mutableStateOf(existing?.enteredPacks?.takeIf { it > 0 }?.toString() ?: "") }
     var pieces by remember(existing) { mutableStateOf(existing?.enteredPieces?.takeIf { it > 0 }?.toString() ?: "") }
     var note by remember(existing) { mutableStateOf(existing?.note ?: "") }
-    var rxId by remember(existing) { mutableStateOf<Long?>(existing?.rxId) }
+    // Ф13.5 §6.3: для новой выдачи чип рецепта предвыбран по rxId из маршрута —
+    // существующая логика авто-«отоварен» при сохранении сработает как есть
+    var rxId by remember(existing) { mutableStateOf<Long?>(existing?.rxId ?: preselectRxId) }
 
     val today = Dates.today()
     val dateInFuture = date.isAfter(today)

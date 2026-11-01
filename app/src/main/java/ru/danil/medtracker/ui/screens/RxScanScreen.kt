@@ -364,7 +364,7 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?) -> Unit) {
+fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?, rxId: Long?) -> Unit) {
     val vm = appViewModel { RxScanViewModel(it) }
     val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
@@ -653,11 +653,14 @@ fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?) -> Unit) {
                 val pid = state.savedPrescriptionId
                 if (pid != null) {
                     // Ф1.4: «Выдать» (вместо «Выдать сейчас») — форма выдачи с датой рецепта,
-                    // подтверждение пользователем в самой форме, автосохранения нет
+                    // подтверждение пользователем в самой форме, автосохранения нет.
+                    // Ф13.5 §6.3: передаём и rxId — чип рецепта предвыбран, выдача не
+                    // останется без связи, дубль-проверка её видит
                     TextButton(onClick = {
                         val rxDate = state.issueDate?.let { Dates.toEpochDay(it) }
+                        val savedRx = state.savedRxId
                         vm.reset()
-                        onIssue(pid, rxDate)
+                        onIssue(pid, rxDate, savedRx)
                     }) { Text("Выдать") }
                 } else null
             },

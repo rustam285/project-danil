@@ -1,5 +1,6 @@
 package ru.danil.medtracker.data
 
+import androidx.room.withTransaction
 import ru.danil.medtracker.calc.CalcService
 import ru.danil.medtracker.calc.SupplyOutcome
 import ru.danil.medtracker.calc.SupplyResult
@@ -160,6 +161,51 @@ class Repo(
         val p = prescriptionDao.byId(prescriptionId) ?: return
         if (p.awaitingRestock) {
             prescriptionDao.update(p.copy(awaitingRestock = false, updatedAt = t))
+        }
+    }
+
+    // ── Выдача по отсканированному рецепту (Ф13, ТЗ 1.4.0) ────────────────────
+
+    /**
+     * Транзакция «Сохранить и выдать» (Ф13.6): вставка нового рецепта или
+     * переиспользование существующего (rx.id != 0, решает вызывающая сторона по
+     * дубль-проверке), выдача датой рецепта, статус «отоварен» (п. 3.5 ТЗ 1.1 —
+     * решение заказчика 01.11.2026). [RxIssuePlan.Plan] уже прошёл сверку в диалоге.
+     */
+    suspend fun issueFromRx(rx: Rx, prescriptionId: Long, plan: RxIssuePlan.Plan, piecesPerPack: Int): Issue =
+        db.withTransaction {
+            val t = now()
+            val date = requireNotNull(rx.issueDate) { "Дата рецепта не заполнена" } // без !!
+            val rxId = if (rx.id == 0L) rxDao.insert(rx.copy(prescriptionId = prescriptionId))
+                       else rx.id.also { rxDao.update(rx.copy(prescriptionId = prescriptionId, updatedAt = t)) }
+            val issue = saveIssue(
+                existing = null, prescriptionId = prescriptionId, date = date,
+                packs = plan.packs, pieces = plan.pieces,
+                note = "Рецепт ${rx.series} № ${rx.number}".takeIf { rx.series.isNotBlank() || rx.number.isNotBlank() },
+                rxId = rxId, piecesPerPack = piecesPerPack,
+            )
+            // п. 3.5 ТЗ 1.1: выдача по рецепту — «отоварен» (решение заказчика 01.11.2026)
+            rxDao.byId(rxId)?.let { if (it.status != "REDEEMED") rxDao.update(it.copy(status = "REDEEMED", updatedAt = t)) }
+            issue
+        }
+
+    /**
+     * «Отменить выдачу» (Ф13.6): удалить выдачу (+ tombstone для дельта-копий,
+     * по образцу IssueFormViewModel.delete) и вернуть рецепту «выписан», только
+     * если других выдач по нему не осталось. «В ожидании поступления»,
+     * снятый выдачей, не восстанавливается (§13 п.12 ТЗ 1.4.0).
+     */
+    suspend fun undoIssueFromRx(issueId: Long, rxId: Long) {
+        db.withTransaction {
+            val t = now()
+            issueDao.delete(issueId)
+            tombstoneDao.insert(
+                ru.danil.medtracker.data.db.Tombstone(entityType = "issue", entityId = issueId, deletedAt = t),
+            )
+            val rx = rxDao.byId(rxId) ?: return@withTransaction
+            if (rx.status == "REDEEMED" && issueDao.forRx(rxId).isEmpty()) {
+                rxDao.update(rx.copy(status = "ISSUED", updatedAt = t))
+            }
         }
     }
 

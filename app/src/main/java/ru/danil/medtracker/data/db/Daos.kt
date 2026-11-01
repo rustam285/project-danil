@@ -185,6 +185,14 @@ interface RxDao {
     @Query("SELECT DISTINCT doctor FROM rxs WHERE doctor IS NOT NULL AND TRIM(doctor) != '' ORDER BY doctor COLLATE NOCASE")
     suspend fun distinctDoctors(): List<String>
 
+    /**
+     * Дубль-проверка по серии и номеру (Ф13.5): REPLACE нормализует только колонку,
+     * аргументы вызывающая сторона обязана нормализовать в Kotlin
+     * (серия — trim, номер — без пробелов/дефисов, см. [ru.danil.medtracker.data.RxDupCheck]).
+     */
+    @Query("SELECT * FROM rxs WHERE series = :s AND REPLACE(number, ' ', '') = :n")
+    suspend fun bySeriesNumber(s: String, n: String): List<Rx>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(r: Rx): Long
 
