@@ -52,6 +52,7 @@ import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.AppSettings
 import ru.danil.medtracker.notify.AlarmScheduler
 import ru.danil.medtracker.ui.IntField
+import ru.danil.medtracker.ui.DatePickerField
 import ru.danil.medtracker.ui.TimePickerField
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
@@ -156,6 +157,62 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setRxThreshold(days: Int) = viewModelScope.launch {
         container.settings.setRxThreshold(days)
     }
+
+    fun setLargeFont(v: Boolean) = viewModelScope.launch {
+        container.settings.setLargeFont(v)
+    }
+
+    fun setShowTabLabels(v: Boolean) = viewModelScope.launch {
+        container.settings.setShowTabLabels(v)
+    }
+
+    fun setBackupReminderDays(days: Int) = viewModelScope.launch {
+        container.settings.setBackupReminderDays(days)
+    }
+
+    /** Готовый .docx отчёта за период (Ф9.2–9.3); null = выдач за период нет. */
+    val reportFile = MutableStateFlow<java.io.File?>(null)
+
+    fun buildIssuesReport(context: android.content.Context, from: java.time.LocalDate, to: java.time.LocalDate) {
+        viewModelScope.launch {
+            busy.value = true
+            message.value = null
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    val repo = container.repo
+                    val fromDay = Dates.toEpochDay(from)
+                    val toDay = Dates.toEpochDay(to)
+                    val issues = repo.issueDao.all().filter { it.date in fromDay..toDay }
+                    if (issues.isEmpty()) return@withContext null
+                    val prescriptions = repo.prescriptionDao.all().associateBy { it.id }
+                    val patients = repo.patientDao.all().associateBy { it.id }
+                    val drugs = repo.drugDao.all().associateBy { it.id }
+                    val rows = issues.mapNotNull { i ->
+                        val p = prescriptions[i.prescriptionId] ?: return@mapNotNull null
+                        val fio = patients[p.patientId]?.fio ?: return@mapNotNull null
+                        val drugName = drugs[p.drugId]?.name ?: ""
+                        ru.danil.medtracker.docx.IssuesReportDoc.Row(
+                            date = Dates.fromEpochDay(i.date),
+                            fio = fio,
+                            drugName = drugName,
+                            pieces = i.totalPieces,
+                            packs = i.enteredPacks,
+                            perPack = i.piecesPerPackAtIssue,
+                            isInitialBalance = i.isInitialBalance,
+                        )
+                    }
+                    val bytes = ru.danil.medtracker.docx.IssuesReportDoc.build(rows, from, to)
+                    val dir = java.io.File(context.cacheDir, "docs").apply { mkdirs() }
+                    val file = java.io.File(dir, "Выдачи_${Dates.formatIso(from)}_${Dates.formatIso(to)}.docx")
+                    file.writeBytes(bytes)
+                    file
+                }
+            }.onSuccess { f ->
+                if (f == null) message.value = "Выдач за период нет" else reportFile.value = f
+            }.onFailure { message.value = "Ошибка: ${it.message}" }
+            busy.value = false
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -168,6 +225,9 @@ fun SettingsScreen() {
     val message by vm.message.collectAsStateWithLifecycle()
     val backups by vm.backups.collectAsStateWithLifecycle()
     val restorePreview by vm.restorePreview.collectAsStateWithLifecycle()
+    val reportFile by vm.reportFile.collectAsStateWithLifecycle()
+
+    var showReportDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.refreshBackups(context) }
 
@@ -191,6 +251,31 @@ fun SettingsScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // ── Интерфейс (Ф11 + подписи вкладок) ──
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Интерфейс", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Крупный шрифт", Modifier.weight(1f))
+                        Switch(checked = settings.largeFont, onCheckedChange = { vm.setLargeFont(it) })
+                    }
+                    Text(
+                        "Увеличивает шрифт во всём приложении.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Подписи под значками вкладок", Modifier.weight(1f))
+                        Switch(checked = settings.showTabLabels, onCheckedChange = { vm.setShowTabLabels(it) })
+                    }
+                    Text(
+                        "Скрывает текст под значками внизу экрана.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             // ── Уведомления (п. 5.7, Ф5.1) ──
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -236,6 +321,24 @@ fun SettingsScreen() {
                     IntField("Порог рецептов (дней)", settings.rxThresholdDays, { v ->
                         if (v != null && v in 1..90) vm.setRxThreshold(v)
                     }, Modifier.fillMaxWidth())
+                    // Порог напоминания о давности копии (Ф8.1): 0 = не напоминать
+                    Text("Порог напоминания о копии, дней (0 — не напоминать)", style = MaterialTheme.typography.titleSmall)
+                    IntField("Порог напоминания о копии", settings.backupReminderDays, { v ->
+                        if (v != null && v in 0..365) vm.setBackupReminderDays(v)
+                    }, Modifier.fillMaxWidth())
+                }
+            }
+
+            // ── Документы (Ф9) ──
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Документы", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Отчёт по выдачам из журнала за выбранный период (Word).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { showReportDialog = true }) { Text("Отчёт по выдачам за период…") }
                 }
             }
 
@@ -341,6 +444,62 @@ fun SettingsScreen() {
                 TextButton(onClick = { vm.confirmRestore(context) }) { Text("Восстановить") }
             },
             dismissButton = { TextButton(onClick = { vm.restorePreview.value = null }) { Text("Отмена") } },
+        )
+    }
+
+    // Выбор периода «с/по» для отчёта по выдачам (Ф9.1)
+    if (showReportDialog) {
+        val today = java.time.LocalDate.now()
+        var from by remember { mutableStateOf(today.withDayOfMonth(1)) }
+        var to by remember { mutableStateOf(today) }
+        val rangeOk = !to.isBefore(from)
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            title = { Text("Отчёт по выдачам") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DatePickerField("Период, с", from, { from = it ?: today }, Modifier.fillMaxWidth())
+                    DatePickerField("Период, по", to, { to = it ?: today }, Modifier.fillMaxWidth())
+                    if (!rangeOk) {
+                        Text(
+                            "Дата «по» не может быть раньше «с»",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = rangeOk,
+                    onClick = {
+                        showReportDialog = false
+                        vm.buildIssuesReport(context, from, to)
+                    },
+                ) { Text("Создать") }
+            },
+            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text("Отмена") } },
+        )
+    }
+
+    // Готовый отчёт → Сохранить/Поделиться (Ф9.3)
+    reportFile?.let { file ->
+        AlertDialog(
+            onDismissRequest = { vm.reportFile.value = null },
+            title = { Text("Отчёт готов") },
+            text = { Text(file.name) },
+            confirmButton = {
+                TextButton(onClick = {
+                    ru.danil.medtracker.docx.DocxShare.share(context, file)
+                    vm.reportFile.value = null
+                }) { Text("Поделиться") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    ru.danil.medtracker.docx.DocxShare.saveViaSaf(context, file)
+                    vm.reportFile.value = null
+                }) { Text("Сохранить") }
+            },
         )
     }
 }
