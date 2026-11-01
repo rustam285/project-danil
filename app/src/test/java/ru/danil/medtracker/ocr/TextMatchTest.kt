@@ -83,4 +83,31 @@ class TextMatchTest {
         val best = TextMatch.bestMatches(listOf("!!! ??? 12345"), patients, nameOf = { it.fio })
         assertTrue(best.isEmpty() || best.first().second < TextMatch.AUTO_SELECT_MIN)
     }
+
+    // ── Ф13.3 (ТЗ 1.4.0 §4): покрытие названия токенами всего текста рецепта ────
+
+    /** Название целиком в тексте → 100. */
+    @Test
+    fun coverageFullNameInText() {
+        assertEquals(100, TextMatch.coverage("выписано Глюкометр Контур Плюс №1", "Глюкометр Контур Плюс"))
+    }
+
+    /** 2 из 3 токенов → 66. */
+    @Test
+    fun coverageTwoOfThreeTokens() {
+        assertEquals(66, TextMatch.coverage("глюкометр контур один", "Глюкометр Контур Плюс"))
+    }
+
+    /** 1 из 3 токенов → 33. */
+    @Test
+    fun coverageOneOfThreeTokens() {
+        assertEquals(33, TextMatch.coverage("глюкометр один два", "Глюкометр Контур Плюс"))
+    }
+
+    /** Пустое название (или без значимых токенов) → 0. */
+    @Test
+    fun coverageEmptyName() {
+        assertEquals(0, TextMatch.coverage("любой текст рецепта", ""))
+        assertEquals(0, TextMatch.coverage("любой текст рецепта", "—"))
+    }
 }

@@ -3,6 +3,7 @@ package ru.danil.medtracker.ocr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Разбор полей рецепта по тексту OCR (п. 6.3) — на структуру формы 148-1/у-04(л). */
@@ -91,5 +92,73 @@ class OcrEngineTest {
     fun scoreTextSeparatesGarbageFromText() {
         org.junit.Assert.assertTrue(OcrEngine.scoreText("!!! ??? @@@ (())") < OcrEngine.MIN_TEXT_SCORE)
         org.junit.Assert.assertTrue(OcrEngine.scoreText("РЕЦЕПТ Серия 75464 пациент Тестов") >= OcrEngine.MIN_TEXT_SCORE)
+    }
+
+    // ── Ф13.2 (ТЗ 1.4.0 §3): поля для «Сохранить и выдать» ──────────────────────
+
+    /** «Количество единиц: 5»; мусор ≤6 симв. между меткой и числом допускается. */
+    @Test
+    fun parseUnitsCount() {
+        assertEquals(5, OcrEngine.parse("Количество единиц: 5").unitsCount)
+        assertEquals(3, OcrEngine.parse("Количество единиц : () 3").unitsCount)
+        // больше 6 символов мусора — число к метке уже не относится
+        assertNull(OcrEngine.parse("Количество единиц: слишком далеко 5").unitsCount)
+    }
+
+    /** «№» из строки Dtd.: та же или следующая строка; варианты D.t.d. / N. */
+    @Test
+    fun parsePackSize() {
+        assertEquals(50, OcrEngine.parse("Дозировка\nDtd.\n№ 50").packSize)
+        assertEquals(30, OcrEngine.parse("Dtd. 2 мг №30").packSize)
+        assertEquals(10, OcrEngine.parse("D.t.d. N 10").packSize)
+        assertNull(OcrEngine.parse("Дозировка Dtd. без номера").packSize)
+    }
+
+    /** «Выписано Вр.» (встречается на реальных бланках) и «Выписано Rp.: …». */
+    @Test
+    fun parseRpName() {
+        assertEquals(
+            "Тест-полоски Ван Тач Селект",
+            OcrEngine.parse("Выписано Вр.\nТест-полоски Ван Тач Селект").rpName,
+        )
+        assertEquals("Тестулин 100 ЕД/мл", OcrEngine.parse("Выписано Rp.: Тестулин 100 ЕД/мл").rpName)
+    }
+
+    /** «Форма выпуска» — значение на следующей строке; Signa — на той же. */
+    @Test
+    fun parseFormNameAndSigna() {
+        assertEquals("Таблетки 100 мг", OcrEngine.parse("Форма выпуска\nТаблетки 100 мг").formName)
+        assertEquals("4 таб в сутки", OcrEngine.parse("Signa: 4 таб в сутки").signa)
+    }
+
+    /** Штамп отсроченного обеспечения (детект «ОТСРОЧ» без учёта регистра). */
+    @Test
+    fun parseDeferred() {
+        org.junit.Assert.assertTrue(OcrEngine.parse("РЕЦЕПТ ПОСТАВЛЕН НА ОТСРОЧЕННОЕ ОБЕСПЕЧЕНИЕ").deferred)
+        org.junit.Assert.assertFalse(OcrEngine.parse("Количество единиц: 5").deferred)
+    }
+
+    /** Все новые поля с одного бланка одновременно. */
+    @Test
+    fun parseFullFormNewFields() {
+        val text = """
+            РЕЦЕПТ
+            Серия 75464 № 25 222 011 880 от 29.07.2026
+            Ф.И.О. пациента: Тестов Тест Тестович
+            Выписано Вр.: Тест-полоски Ван Тач Селект
+            Количество единиц: 5
+            Dtd. №50
+            Signa: по 1 полоске в сутки
+            РЕЦЕПТ ПОСТАВЛЕН НА ОТСРОЧЕННОЕ ОБЕСПЕЧЕНИЕ
+        """.trimIndent()
+        val d = OcrEngine.parse(text)
+        assertEquals(5, d.unitsCount)
+        assertEquals(50, d.packSize)
+        assertEquals("по 1 полоске в сутки", d.signa)
+        assertEquals("Тест-полоски Ван Тач Селект", d.rpName)
+        assertTrue(d.deferred)
+        // регресс: прежние поля не пострадали
+        assertEquals("75464", d.series)
+        assertEquals("25222011880", d.number)
     }
 }

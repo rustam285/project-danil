@@ -202,8 +202,7 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         val ps = repo.prescriptionDao.allActive().filter { it.patientId == patientId }
         val scores = ps.mapNotNull { p ->
             val name = drugs[p.drugId]?.name ?: return@mapNotNull null
-            val score = draft?.drugLines?.maxOfOrNull { TextMatch.similarity(it, name) } ?: 0
-            p.id to score
+            p.id to prescriptionScore(draft?.drugLines ?: emptyList(), draft?.rawText, name)
         }.toMap()
         return st.copy(
             prescriptions = ps,
@@ -333,6 +332,18 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
     companion object {
         /** Назначение помечается «совпадает с рецептом», начиная с этого балла. */
         const val DRUG_MATCH_MIN = 60
+
+        /**
+         * Балл назначения по OCR (Ф13.3): максимум из сходства с распознанными
+         * строками препарата и доли токенов названия во всём тексте рецепта
+         * (coverage; учитывается только при пороге [DRUG_MATCH_MIN] и выше).
+         * Чистая функция — покрыта тестами.
+         */
+        fun prescriptionScore(drugLines: List<String>, rawText: String?, drugName: String): Int {
+            val byLines = drugLines.maxOfOrNull { TextMatch.similarity(it, drugName) } ?: 0
+            val cov = rawText?.let { TextMatch.coverage(it, drugName) } ?: 0
+            return maxOf(byLines, if (cov >= DRUG_MATCH_MIN) cov else 0)
+        }
 
         /**
          * Автоподбор назначения (Ф1.3): единственный явный лидер — выбирается;

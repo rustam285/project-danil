@@ -50,6 +50,19 @@ object TextMatch {
     }
 
     /**
+     * Доля токенов названия, найденных в тексте рецепта (0..100) — Ф13.3: названия
+     * в «Rp.» бывают общими, настоящее название — в корешке, поэтому позиция
+     * подбирается по всему тексту бланка, а не только по строке препарата.
+     */
+    fun coverage(text: String, name: String): Int {
+        val nt = tokens(name); if (nt.isEmpty()) return 0
+        val nn = normalize(name)
+        if (nn.isNotEmpty() && normalize(text).contains(nn)) return 100
+        val tt = tokens(text)
+        return nt.count { it in tt } * 100 / nt.size
+    }
+
+    /**
      * Лучшие кандидаты по набору распознанных строк: балл кандидата — максимум
      * по всем строкам. Возвращает пары (кандидат, балл), убывание, только score > 0.
      */

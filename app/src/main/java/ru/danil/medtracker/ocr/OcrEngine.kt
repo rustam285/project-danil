@@ -28,6 +28,13 @@ object OcrEngine {
         val birthDate: String? = null, // ДД.ММ.ГГГГ
         val diagnosis: String? = null, // код МКБ
         val drugLines: List<String> = emptyList(),
+        // Ф13.2: поля для «Сохранить и выдать» в скан-потоке
+        val unitsCount: Int? = null,   // «Количество единиц: 5»
+        val packSize: Int? = null,     // «№50» из строки Dtd
+        val signa: String? = null,     // только подсказка, в расчётах не участвует
+        val rpName: String? = null,    // строка после «Выписано Rp./Вр.»
+        val formName: String? = null,  // строка после «Форма выпуска»
+        val deferred: Boolean = false, // штамп «отсроченное обеспечение»
         val rawText: String = "",
     )
 
@@ -320,6 +327,41 @@ object OcrEngine {
             cyr >= 6 && !stopWords.containsMatchIn(line) && !dateRe.containsMatchIn(line)
         }.take(6)
 
+        // ── Ф13.2: количество единиц, № упаковки из строки Dtd, Signa, «Выписано Rp./Вр.», ──
+        // «Форма выпуска», штамп отсроченного обеспечения. Не нашли — null, молча
+        // угадывать нельзя: поле заполняет человек. Regex по ТЗ 1.4.0 §3 (учтена грабля
+        // project.md §7 — квантификаторы после кириллицы, явные регистры).
+        val unitsCount = Regex("""[Кк]оличеств[оа]\s+единиц[^\d\n]{0,6}(\d{1,4})""")
+            .find(text)?.groupValues?.get(1)?.toIntOrNull()
+
+        // Dtd. / D.t.d. — ищем строку с меткой, затем «№N» в ней или в следующей строке
+        val dtdMark = Regex("""D[.\s]*t[.\s]*d""", RegexOption.IGNORE_CASE)
+        val packSize = run {
+            val i = lines.indexOfFirst { dtdMark.containsMatchIn(it) }
+            if (i < 0) null else (i..minOf(i + 1, lines.lastIndex)).firstNotNullOfOrNull { idx ->
+                Regex("""(?<![A-Za-zА-Яа-я])[№Nn]\s*(\d{1,4})""").find(lines[idx])
+                    ?.groupValues?.get(1)?.toIntOrNull()
+            }
+        }
+
+        val signa = Regex("""Signa\s*[:.]?\s*(.+)""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.get(1)?.trim()
+
+        // значение — сначала на той же строке после метки, затем на следующей строке
+        fun labelValue(labelRe: Regex): String? {
+            for (line in lines) {
+                val m = labelRe.find(line) ?: continue
+                val same = line.substring(m.range.last + 1).trim(':', '.', ' ', '|').trim()
+                if (same.length >= 3) return same
+            }
+            val i = lines.indexOfFirst { labelRe.containsMatchIn(it) }
+            return if (i in 0 until lines.lastIndex) lines[i + 1].trim().takeIf { it.length >= 3 } else null
+        }
+        val rpName = labelValue(Regex("""[Вв]ыписан[оа]\s+(?:Rp|Вр)"""))
+        val formName = labelValue(Regex("""[Фф]орм[аы]\s+выпуск[аы]"""))
+
+        val deferred = text.uppercase().contains("ОТСРОЧ")
+
         return Draft(
             series = series,
             number = number,
@@ -329,6 +371,12 @@ object OcrEngine {
             birthDate = birthDate,
             diagnosis = diagnosis,
             drugLines = drugLines,
+            unitsCount = unitsCount,
+            packSize = packSize,
+            signa = signa,
+            rpName = rpName,
+            formName = formName,
+            deferred = deferred,
             rawText = text.trim(),
         )
     }
