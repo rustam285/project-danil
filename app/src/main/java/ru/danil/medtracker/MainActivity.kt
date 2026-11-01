@@ -58,7 +58,7 @@ object Routes {
     const val PATIENT_EDIT = "patientEdit?patientId={patientId}"
     const val PRESCRIPTION = "prescription/{id}"
     const val PRESCRIPTION_EDIT = "prescriptionEdit?patientId={patientId}&prescriptionId={prescriptionId}"
-    const val ISSUE_EDIT = "issueEdit/{prescriptionId}?issueId={issueId}"
+    const val ISSUE_EDIT = "issueEdit/{prescriptionId}?issueId={issueId}&date={date}"
     const val RX_EDIT = "rxEdit/{patientId}?rxId={rxId}&prescriptionId={prescriptionId}"
     const val COPY_PRESCRIPTIONS = "copyPrescriptions/{patientId}"
 
@@ -67,8 +67,10 @@ object Routes {
     fun prescription(id: Long) = "prescription/$id"
     fun prescriptionEdit(patientId: Long, prescriptionId: Long?) =
         "prescriptionEdit?patientId=$patientId&prescriptionId=${prescriptionId ?: -1L}"
-    fun issueEdit(prescriptionId: Long, issueId: Long?) =
-        "issueEdit/$prescriptionId?issueId=${issueId ?: -1L}"
+
+    /** [defaultDate] — дата рецепта для сценария «Выдать» из скан-потока (Ф1.4); null = сегодня. */
+    fun issueEdit(prescriptionId: Long, issueId: Long?, defaultDate: Long? = null) =
+        "issueEdit/$prescriptionId?issueId=${issueId ?: -1L}&date=${defaultDate ?: -1L}"
 
     /** Правка существующего назначения: patientId берётся из самого назначения. */
     fun rxEdit(patientId: Long, rxId: Long?, prescriptionId: Long? = null) =
@@ -176,7 +178,9 @@ fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
                     )
                 }
                 composable(Routes.RX_SCAN) {
-                    RxScanScreen(onIssue = { nav.navigate(Routes.issueEdit(it, null)) })
+                    RxScanScreen(onIssue = { pid, rxDate ->
+                        nav.navigate(Routes.issueEdit(pid, null, rxDate))
+                    })
                 }
                 composable(Routes.SETTINGS) { SettingsScreen() }
                 composable(Routes.PATIENT) {
@@ -235,11 +239,13 @@ fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
                     arguments = listOf(
                         navArgument("prescriptionId") { type = NavType.StringType; defaultValue = "-1" },
                         navArgument("issueId") { type = NavType.StringType; defaultValue = "-1" },
+                        navArgument("date") { type = NavType.StringType; defaultValue = "-1" },
                     ),
                 ) {
                     IssueFormScreen(
                         prescriptionId = it.arguments?.getString("prescriptionId")?.toLongOrNull() ?: return@composable,
                         issueId = it.arguments?.getString("issueId")?.toLongOrNull()?.takeIf { v -> v > 0 },
+                        defaultDate = it.arguments?.getString("date")?.toLongOrNull()?.takeIf { v -> v > 0 },
                         onSaved = { nav.popBackStack() },
                         onCancel = { nav.popBackStack() },
                     )

@@ -197,6 +197,9 @@ fun PatientCardScreen(
     var showAnalysisRecord by remember { mutableStateOf(false) }
     var addRecordType by remember { mutableStateOf<Long?>(null) }
     var editRecord by remember { mutableStateOf<ru.danil.medtracker.data.db.AnalysisRecord?>(null) }
+    var viewerFile by remember { mutableStateOf<java.io.File?>(null) }
+    var recognizedText by remember { mutableStateOf<Pair<String, String?>?>(null) }
+    var ocrBusy by remember { mutableStateOf(false) }
 
     val patient = state.patient
 
@@ -445,8 +448,15 @@ fun PatientCardScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                // миниатюры: тап — полноэкранный просмотр (Ф1.1, после сохранения)
+                                val photoFiles = rx.photos().map { ru.danil.medtracker.ocr.PhotoStore.file(context, it) }
+                                if (photoFiles.isNotEmpty()) {
+                                    ru.danil.medtracker.ui.PhotoThumbRow(
+                                        photos = photoFiles,
+                                        onOpen = { viewerFile = it },
+                                    )
+                                }
                             }
-                            Text("${rx.photos().size} фото", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -516,6 +526,41 @@ fun PatientCardScreen(
                 addRecordType = null
             },
         )
+    }
+
+    // Полноэкранный просмотр фото сохранённого рецепта (Ф1.1); повторный OCR (Ф1.2) —
+    // текст диалогом с копированием, в поля переносится вручную
+    viewerFile?.let { f ->
+        ru.danil.medtracker.ui.PhotoViewer(
+            file = f,
+            onReRecognize = {
+                ocrBusy = true
+                ru.danil.medtracker.ocr.OcrRunner.recognize(scope, context, f) { res ->
+                    ocrBusy = false
+                    viewerFile = null
+                    res.onSuccess { d ->
+                        recognizedText = d.rawText.ifBlank { " " } to buildString {
+                            append("Серия ${d.series ?: "—"}, № ${d.number ?: "—"}")
+                            d.issueDate?.let { append(", дата $it") }
+                        }
+                    }.onFailure { e ->
+                        android.widget.Toast.makeText(context, e.message, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onDismiss = { viewerFile = null },
+        )
+    }
+    if (ocrBusy) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Распознавание") },
+            text = { Text("Распознаём…") },
+            confirmButton = {},
+        )
+    }
+    recognizedText?.let { (text, summary) ->
+        ru.danil.medtracker.ui.RecognizedTextDialog(text, summary) { recognizedText = null }
     }
 }
 

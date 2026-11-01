@@ -98,6 +98,7 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         val error: String? = null,
         val saved: Boolean = false,
         val savedPrescriptionId: Long? = null,
+        val savedRxId: Long? = null,
     )
 
     val state = MutableStateFlow(ScanState())
@@ -180,6 +181,9 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
                     append(if (draft.issueDate != null) ", дата ${draft.issueDate}" else ", дата —")
                     append(if (draft.validDays != null) ", срок ${draft.validDays} дн" else ", срок —")
                     if (draft.fio != null) append(", ФИО «${draft.fio}»")
+                    if (draft.birthDate != null) append(", дата рождения ${draft.birthDate}")
+                    if (draft.diagnosis != null) append(", МКБ ${draft.diagnosis}")
+                    if (draft.drugLines.isNotEmpty()) append(", позиция: ${draft.drugLines.first().take(60)}")
                     append(". Сверьте поля с фото и сохраните.")
                 }
             },
@@ -201,13 +205,42 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
             val score = draft?.drugLines?.maxOfOrNull { TextMatch.similarity(it, name) } ?: 0
             p.id to score
         }.toMap()
-        val best = scores.filter { it.value >= DRUG_MATCH_MIN }.maxByOrNull { it.value }?.key
         return st.copy(
             prescriptions = ps,
             drugsById = drugs,
             prescriptionScores = scores,
-            prescriptionId = best,
+            prescriptionId = autoSelectPrescription(scores),
         )
+    }
+
+    /** Пациента нет в базе — создаём на месте, остальные поля карточки заполнят позже. */
+    fun createPatient(fio: String, birthEpochDay: Long, diagnosis: String?) {
+        viewModelScope.launch {
+            try {
+                val t = System.currentTimeMillis()
+                val p = Patient(
+                    fio = fio.trim(),
+                    birthDate = birthEpochDay,
+                    address = "",
+                    diagnosis = diagnosis?.trim()?.takeIf { it.isNotBlank() },
+                    createdAt = t,
+                    updatedAt = t,
+                )
+                val id = repo.patientDao.insert(p)
+                selectPatient(p.copy(id = id))
+            } catch (e: Exception) {
+                state.value = state.value.copy(error = e.message ?: "Не удалось создать пациента")
+            }
+        }
+    }
+
+    /** Позиции нет в справочнике — быстрое создание на месте (Ф1.3), вид «препарат/устройство». */
+    fun createDrug(drug: Drug, onCreated: (Drug) -> Unit) {
+        viewModelScope.launch {
+            val t = System.currentTimeMillis()
+            val id = repo.drugDao.insert(drug.copy(updatedAt = t))
+            onCreated(drug.copy(id = id, updatedAt = t))
+        }
     }
 
     fun setSeries(v: String) {
@@ -248,32 +281,16 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    /** Пациента нет в базе — создаём на месте, остальные поля карточки заполнят позже. */
-    fun createPatient(fio: String, birthEpochDay: Long, diagnosis: String?) {
-        viewModelScope.launch {
-            try {
-                val t = System.currentTimeMillis()
-                val p = Patient(
-                    fio = fio.trim(),
-                    birthDate = birthEpochDay,
-                    address = "",
-                    diagnosis = diagnosis?.trim()?.takeIf { it.isNotBlank() },
-                    createdAt = t,
-                    updatedAt = t,
-                )
-                val id = repo.patientDao.insert(p)
-                selectPatient(p.copy(id = id))
-            } catch (e: Exception) {
-                state.value = state.value.copy(error = e.message ?: "Не удалось создать пациента")
-            }
-        }
-    }
-
     fun save() {
         val st = state.value
         val patient = st.patient
         if (patient == null) {
             state.value = st.copy(error = "Выберите пациента")
+            return
+        }
+        // Ф1.5: будущая дата выдачи рецепта блокируется с объяснением
+        if (st.issueDate != null && st.issueDate!!.isAfter(Dates.today())) {
+            state.value = st.copy(error = "Дата выдачи рецепта не может быть в будущем")
             return
         }
         viewModelScope.launch {
@@ -292,8 +309,8 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
                     createdAt = t,
                     updatedAt = t,
                 )
-                repo.rxDao.insert(rx)
-                state.value = st.copy(saved = true, savedPrescriptionId = st.prescriptionId)
+                val id = repo.rxDao.insert(rx)
+                state.value = st.copy(saved = true, savedPrescriptionId = st.prescriptionId, savedRxId = id)
             } catch (e: Exception) {
                 state.value = st.copy(error = e.message ?: "Не удалось сохранить")
             }
@@ -316,18 +333,35 @@ class RxScanViewModel(private val container: AppContainer) : ViewModel() {
     companion object {
         /** Назначение помечается «совпадает с рецептом», начиная с этого балла. */
         const val DRUG_MATCH_MIN = 60
+
+        /**
+         * Автоподбор назначения (Ф1.3): единственный явный лидер — выбирается;
+         * несколько с равным максимальным баллом (неоднозначность) — без автовыбора,
+         * пользователь выбирает из чипов вручную. Чистая функция, покрыта тестами.
+         */
+        fun autoSelectPrescription(scores: Map<Long, Int>, min: Int = DRUG_MATCH_MIN): Long? {
+            val sorted = scores.entries.filter { it.value >= min }.sortedByDescending { it.value }
+            return when {
+                sorted.isEmpty() -> null
+                sorted.size == 1 -> sorted.first().key
+                sorted[0].value > sorted[1].value -> sorted.first().key
+                else -> null // неоднозначно — ручной выбор
+            }
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun RxScanScreen(onIssue: (Long) -> Unit) {
+fun RxScanScreen(onIssue: (prescriptionId: Long, rxDateEpoch: Long?) -> Unit) {
     val vm = appViewModel { RxScanViewModel(it) }
     val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
     val patients by vm.patients.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
+    var viewPhoto by remember { mutableStateOf(false) }
+    var showCreatePosition by remember { mutableStateOf(false) }
     var showCreatePatient by remember { mutableStateOf(false) }
     var showCameraRationale by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<Uri?>(null) }
@@ -373,6 +407,7 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
                     }) { Text("Галерея") }
                 }
             } else {
+                // Тап по снимку — полноэкранный просмотр с зумом и повторным OCR (Ф1.1, Ф1.2)
                 AsyncImage(
                     model = PhotoStore.file(context, state.photoPath!!),
                     contentDescription = "Фото рецепта",
@@ -380,7 +415,8 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(220.dp)
-                        .clip(RoundedCornerShape(12.dp)),
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { viewPhoto = true },
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -508,6 +544,22 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
                             )
                         }
                     }
+                    val bestScore = state.prescriptionScores.values.maxOrNull() ?: 0
+                    if (bestScore < RxScanViewModel.DRUG_MATCH_MIN) {
+                        // позиция не сопоставилась ни с одним назначением — быстрое создание (Ф1.3)
+                        Text(
+                            "Распознанная позиция не совпала с назначениями пациента",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(onClick = { showCreatePosition = true }) {
+                            Text("+ Создать позицию в справочнике")
+                        }
+                    }
+                } else if (patient != null && state.prescriptions.isEmpty() && !state.draft?.drugLines.isNullOrEmpty()) {
+                    OutlinedButton(onClick = { showCreatePosition = true }, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("+ Создать позицию в справочнике")
+                    }
                 }
 
                 state.error?.let {
@@ -589,10 +641,13 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
             confirmButton = {
                 val pid = state.savedPrescriptionId
                 if (pid != null) {
+                    // Ф1.4: «Выдать» (вместо «Выдать сейчас») — форма выдачи с датой рецепта,
+                    // подтверждение пользователем в самой форме, автосохранения нет
                     TextButton(onClick = {
+                        val rxDate = state.issueDate?.let { Dates.toEpochDay(it) }
                         vm.reset()
-                        onIssue(pid)
-                    }) { Text("Выдать сейчас") }
+                        onIssue(pid, rxDate)
+                    }) { Text("Выдать") }
                 } else null
             },
             dismissButton = {
@@ -609,6 +664,29 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
             confirmButton = {
                 TextButton(onClick = { showCameraRationale = false }) { Text("Понятно") }
             },
+        )
+    }
+
+    // Полноэкранный просмотр снимка с повторным распознаванием (Ф1.1, Ф1.2)
+    if (viewPhoto && state.photoPath != null) {
+        ru.danil.medtracker.ui.PhotoViewer(
+            file = PhotoStore.file(context, state.photoPath!!),
+            onReRecognize = {
+                vm.reRecognize(context)
+            },
+            onDismiss = { viewPhoto = false },
+        )
+    }
+
+    // Быстрое создание позиции (Ф1.3): вид «препарат/устройство» — как у пациента, на месте
+    if (showCreatePosition) {
+        DrugCreateDialog(
+            duplicateWarning = null,
+            onCheckDuplicate = { },
+            onCreate = { draft ->
+                vm.createDrug(draft) { showCreatePosition = false }
+            },
+            onDismiss = { showCreatePosition = false },
         )
     }
 }

@@ -85,25 +85,32 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
         val gapsAll: List<Pair<Long, Long>> = emptyList(),
         /** «В ожидании поступления» (ручной статус, снимается при выдаче) */
         val awaitingRestock: Boolean = false,
+        /** Рецепты этого назначения — просмотр фото (Ф1.1) */
+        val rxs: List<ru.danil.medtracker.data.db.Rx> = emptyList(),
     )
+
+    /** combine() больше 5 Flow нельзя (грабли §7). */
+    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     fun state(prescriptionId: Long) = combine(
         combine(
             repo.prescriptionDao.observeAllActive(),
             repo.normDao.observeAll(),
             repo.issueDao.observeAll(),
-        ) { p, n, i -> Triple(p, n, i) },
+            repo.rxDao.observeAllRxs(),
+        ) { p, n, i, r -> Quad(p, n, i, r) },
         combine(
             repo.drugDao.observeAll(),
             container.settings.settings,
         ) { d, s -> Pair(d, s) },
     ) { db, aux ->
-        val (prescriptions, norms, issues) = db
+        val (prescriptions, norms, issues, rxsAll) = db
         val (drugs, settings) = aux
         withContext(Dispatchers.Default) {
             val p = prescriptions.firstOrNull { it.id == prescriptionId }
             val ns = norms.filter { it.prescriptionId == prescriptionId }.sortedBy { it.validFrom }
             val issuesList = issues.filter { it.prescriptionId == prescriptionId }.sortedWith(compareBy({ it.date }, { it.id }))
+            val rxs = rxsAll.filter { it.prescriptionId == prescriptionId }.sortedByDescending { it.issueDate ?: it.id }
             val drug = p?.let { drugs.firstOrNull { d -> d.id == it.drugId } }
             val today = Dates.today()
             val noCalc = CalcService.isNoCalc(ns, today)
@@ -137,13 +144,13 @@ class PrescriptionViewModel(private val container: AppContainer) : ViewModel() {
                     p, drug, ns, issuesList, journal, covered, unlimited, noCalc,
                     remainder, remainderPacks, settings.drugThresholdDays,
                     p?.patientId ?: 0, supply.gaps.map { Dates.toEpochDay(it.first) to Dates.toEpochDay(it.second) },
-                    p?.awaitingRestock ?: false,
+                    p?.awaitingRestock ?: false, rxs,
                 )
             }
             val journal = issuesList.reversed().map { issue ->
                 JournalRow(issue, null, false, null)
             }
-            State(p, drug, ns, issuesList, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList(), p?.awaitingRestock ?: false)
+            State(p, drug, ns, issuesList, journal, covered, unlimited, noCalc, remainder, remainderPacks, settings.drugThresholdDays, p?.patientId ?: 0, emptyList(), p?.awaitingRestock ?: false, rxs)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), State())
 
@@ -177,7 +184,12 @@ fun PrescriptionScreen(
 ) {
     val vm = appViewModel { PrescriptionViewModel(it) }
     val state by remember(prescriptionId) { vm.state(prescriptionId) }.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var confirmDelete by remember { mutableStateOf(false) }
+    var viewerFile by remember { mutableStateOf<java.io.File?>(null) }
+    var recognizedText by remember { mutableStateOf<Pair<String, String?>?>(null) }
+    var ocrBusy by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -347,6 +359,56 @@ fun PrescriptionScreen(
                     }
                 }
             }
+            // Рецепты этого назначения: миниатюры → полноэкранный просмотр (Ф1.1)
+            if (state.rxs.isNotEmpty()) {
+                item {
+                    Text(
+                        "Рецепты",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                    )
+                }
+                items(state.rxs.size) { idx ->
+                    val rx = state.rxs[idx]
+                    val until = CalcService.rxValidUntil(rx.issueDate, rx.validDays, rx.validUntil)
+                    val expired = rx.status == "ISSUED" && until?.isBefore(LocalDate.now()) == true
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { onAddRx(state.prescription?.patientId ?: 0, prescriptionId) },
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "Рецепт ${rx.series} № ${rx.number}".trim(),
+                                        style = MaterialTheme.typography.titleSmall,
+                                    )
+                                    Text(
+                                        (rx.issueDate?.let { "от ${Dates.formatRu(it)}" } ?: "") + " · " + when {
+                                            rx.status == "REDEEMED" -> "отоварен"
+                                            expired -> "истёк"
+                                            else -> "выписан"
+                                        } + (rx.doctor?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            val photoFiles = rx.photos().map { ru.danil.medtracker.ocr.PhotoStore.file(context, it) }
+                            if (photoFiles.isNotEmpty()) {
+                                ru.danil.medtracker.ui.PhotoThumbRow(
+                                    photos = photoFiles,
+                                    onOpen = { viewerFile = it },
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             item { Spacer(Modifier.height(80.dp)) }
         }
     }
@@ -374,5 +436,39 @@ fun PrescriptionScreen(
                 }
             },
         )
+    }
+
+    // Просмотр фото сохранённого рецепта (Ф1.1) + повторный OCR текстом (Ф1.2)
+    viewerFile?.let { f ->
+        ru.danil.medtracker.ui.PhotoViewer(
+            file = f,
+            onReRecognize = {
+                ocrBusy = true
+                ru.danil.medtracker.ocr.OcrRunner.recognize(scope, context, f) { res ->
+                    ocrBusy = false
+                    viewerFile = null
+                    res.onSuccess { d ->
+                        recognizedText = d.rawText.ifBlank { " " } to buildString {
+                            append("Серия ${d.series ?: "—"}, № ${d.number ?: "—"}")
+                            d.issueDate?.let { append(", дата $it") }
+                        }
+                    }.onFailure { e ->
+                        android.widget.Toast.makeText(context, e.message, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onDismiss = { viewerFile = null },
+        )
+    }
+    if (ocrBusy) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Распознавание") },
+            text = { Text("Распознаём…") },
+            confirmButton = {},
+        )
+    }
+    recognizedText?.let { (text, summary) ->
+        ru.danil.medtracker.ui.RecognizedTextDialog(text, summary) { recognizedText = null }
     }
 }

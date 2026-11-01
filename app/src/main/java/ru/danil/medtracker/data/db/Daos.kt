@@ -172,6 +172,9 @@ interface RxDao {
     @Query("SELECT * FROM rxs WHERE id = :id")
     suspend fun byId(id: Long): Rx?
 
+    @Query("SELECT * FROM rxs")
+    fun observeAllRxs(): Flow<List<Rx>>
+
     @Query("SELECT * FROM rxs WHERE status = 'ISSUED'")
     suspend fun allIssued(): List<Rx>
 

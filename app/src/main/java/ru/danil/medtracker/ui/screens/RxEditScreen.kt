@@ -200,6 +200,7 @@ fun RxEditScreen(
     }
     var showCameraPermissionRationale by remember { mutableStateOf(false) }
     var ocrReport by remember { mutableStateOf<String?>(null) }
+    var viewPhotoPath by remember { mutableStateOf<String?>(null) }
 
     // PickVisualMedia (системный фото-пикер) надёжнее OEM-реализаций GetContent на Xiaomi/HyperOS
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -249,13 +250,15 @@ fun RxEditScreen(
                     items(rx.photos().size) { idx ->
                         val rel = rx.photos()[idx]
                         Column {
+                            // Тап по миниатюре — полноэкранный просмотр с зумом и повторным OCR (Ф1.1, Ф1.2)
                             AsyncImage(
                                 model = PhotoStore.file(context, rel),
                                 contentDescription = "Фото рецепта",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(120.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewPhotoPath = rel },
                             )
                             TextButton(onClick = { rx = vm.deletePhoto(context, rx, rel) }) { Text("Удалить", style = MaterialTheme.typography.labelSmall) }
                         }
@@ -414,9 +417,19 @@ fun RxEditScreen(
             }
 
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            // Ф1.5: будущая дата выдачи рецепта блокируется с объяснением
+            val issueInFuture = rx.issueDate?.let { Dates.fromEpochDay(it).isAfter(LocalDate.now()) } == true
+            if (issueInFuture) {
+                Text(
+                    "Дата выдачи рецепта не может быть в будущем",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
 
             Button(
                 onClick = { vm.save(rx) },
+                enabled = !issueInFuture,
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
             ) { Text("Сохранить") }
             if (rxId != null) {
@@ -439,6 +452,28 @@ fun RxEditScreen(
             confirmButton = {
                 TextButton(onClick = { ocrReport = null }) { Text("Понятно") }
             },
+        )
+    }
+
+    // Полноэкранный просмотр фото (Ф1.1): повторное распознавание заполняет поля формы (Ф1.2)
+    viewPhotoPath?.let { rel ->
+        ru.danil.medtracker.ui.PhotoViewer(
+            file = PhotoStore.file(context, rel),
+            onReRecognize = {
+                vm.runOcr(context, listOf(rel)) { draft ->
+                    rx = rx.copy(
+                        series = draft.series ?: rx.series,
+                        number = draft.number ?: rx.number,
+                        ocrText = draft.rawText,
+                    )
+                    draft.issueDate?.let { parsed ->
+                        Dates.parseFlexible(parsed)?.let { rx = rx.copy(issueDate = Dates.toEpochDay(it)) }
+                    }
+                    draft.validDays?.let { rx = rx.copy(validDays = it) }
+                    ocrReport = "Распознано ${draft.rawText.length} символов — поля обновлены, сверьте с фото."
+                }
+            },
+            onDismiss = { viewPhotoPath = null },
         )
     }
 }

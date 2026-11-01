@@ -128,6 +128,7 @@ class IssueFormViewModel(private val container: AppContainer) : ViewModel() {
 fun IssueFormScreen(
     prescriptionId: Long,
     issueId: Long?,
+    defaultDate: Long? = null,
     onSaved: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -143,11 +144,19 @@ fun IssueFormScreen(
     val existing = state.existing
     val drug = state.drug
 
-    var date by remember(existing) { mutableStateOf(existing?.let { Dates.fromEpochDay(it.date) } ?: Dates.today()) }
+    // Дата по умолчанию: из сценария «Выдать» из скан-потока — дата рецепта (Ф1.4);
+    // будущая дата не допускается (Ф1.5, по образцу даты рождения)
+    val initialDate = existing?.let { Dates.fromEpochDay(it.date) }
+        ?: defaultDate?.let { Dates.fromEpochDay(it) }?.takeIf { !it.isAfter(Dates.today()) }
+        ?: Dates.today()
+    var date by remember(existing) { mutableStateOf(initialDate) }
     var packs by remember(existing) { mutableStateOf(existing?.enteredPacks?.takeIf { it > 0 }?.toString() ?: "") }
     var pieces by remember(existing) { mutableStateOf(existing?.enteredPieces?.takeIf { it > 0 }?.toString() ?: "") }
     var note by remember(existing) { mutableStateOf(existing?.note ?: "") }
     var rxId by remember(existing) { mutableStateOf<Long?>(existing?.rxId) }
+
+    val today = Dates.today()
+    val dateInFuture = date.isAfter(today)
 
     val packSize = drug?.piecesPerPack ?: 1
     val totalPieces = (packs.toIntOrNull() ?: 0) * packSize + (pieces.toIntOrNull() ?: 0)
@@ -169,6 +178,13 @@ fun IssueFormScreen(
                 Text(CalcService.drugForm(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DatePickerField("Дата выдачи", date, { date = it ?: Dates.today() }, Modifier.fillMaxWidth().padding(top = 8.dp))
+            if (dateInFuture) {
+                Text(
+                    "Дата выдачи не может быть в будущем",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
 
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IntField("Упаковки", packs.toIntOrNull(), { packs = it?.toString() ?: "" }, Modifier.weight(1f))
@@ -214,7 +230,7 @@ fun IssueFormScreen(
                 onClick = {
                     vm.save(prescriptionId, date, packs.toIntOrNull() ?: 0, pieces.toIntOrNull() ?: 0, note.ifBlank { null }, rxId)
                 },
-                enabled = totalPieces > 0,
+                enabled = totalPieces > 0 && !dateInFuture,
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
             ) { Text("Сохранить") }
             if (existing != null) {
