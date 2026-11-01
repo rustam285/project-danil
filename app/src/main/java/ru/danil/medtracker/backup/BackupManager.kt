@@ -389,11 +389,11 @@ class BackupManager(private val container: AppContainer, private val context: Co
             setRxThreshold(restored.rxThresholdDays)
         }
         settings.markFullBackup(full.manifest.fullId, full.manifest.createdAt)
-        // Будильники перепланируются под восстановленное время (Ф5.3.5)
+        // Будильники перепланируются под восстановленное время (Ф5.3.5, Ф3.7 п.6)
         runCatching {
             val s = settings.current()
             if (s.notificationsEnabled) {
-                ru.danil.medtracker.notify.AlarmScheduler.scheduleNext(context, s)
+                ru.danil.medtracker.notify.AlarmScheduler.scheduleAll(context, s)
             }
         }
     }

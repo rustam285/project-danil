@@ -204,7 +204,7 @@ fun SettingsScreen() {
                                     notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 }
                                 vm.setNotificationsEnabled(enabled)
-                                AlarmScheduler.scheduleNext(context, settings.copy(notificationsEnabled = enabled))
+                                AlarmScheduler.scheduleAll(context, settings.copy(notificationsEnabled = enabled))
                             },
                         )
                     }
@@ -222,7 +222,10 @@ fun SettingsScreen() {
                     TimePickerField(
                         "Время напоминаний об анализах",
                         settings.analysisTimeMinutes,
-                        { minutes -> vm.setAnalysisTime(minutes) },
+                        { minutes ->
+                            vm.setAnalysisTime(minutes)
+                            AlarmScheduler.scheduleNextAnalysis(context, settings.copy(analysisTimeMinutes = minutes))
+                        },
                         Modifier.fillMaxWidth(),
                     )
                     Text("Порог для лекарств, дней", style = MaterialTheme.typography.titleSmall)

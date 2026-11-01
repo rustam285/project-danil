@@ -17,11 +17,11 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        // Перепланируем ежедневную проверку при каждом запуске (п. 7.1)
+        // Перепланируем оба будильника (сводка п. 7.1 + анализы Ф3.7) при каждом запуске
         appScope.launch {
             val settings = container.settings.current()
             if (settings.notificationsEnabled) {
-                AlarmScheduler.scheduleNext(this@App, settings)
+                AlarmScheduler.scheduleAll(this@App, settings)
             }
         }
     }

@@ -73,6 +73,9 @@ class PatientCardViewModel(private val container: AppContainer) : ViewModel() {
         val views: List<PrescriptionView> = emptyList(),
         val rxs: List<Rx> = emptyList(),
         val threshold: Int = 7,
+        /** Секция «Анализы» (Ф3.5): доступна любому пациенту */
+        val analysisTypes: List<ru.danil.medtracker.data.db.AnalysisType> = emptyList(),
+        val analysisRecords: List<ru.danil.medtracker.data.db.AnalysisRecord> = emptyList(),
     )
 
     fun state(patientId: Long) = combine(
@@ -80,16 +83,18 @@ class PatientCardViewModel(private val container: AppContainer) : ViewModel() {
             repo.patientDao.observeAll(),
             repo.prescriptionDao.observeActiveForPatient(patientId),
             repo.normDao.observeAll(),
-        ) { p, pr, n -> Triple(p, pr, n) },
+            repo.analysisTypeDao.observeAll(),
+        ) { p, pr, n, at -> Quad(p, pr, n, at) },
         combine(
             repo.issueDao.observeAll(),
             repo.drugDao.observeAll(),
             repo.rxDao.observeForPatient(patientId),
-        ) { i, d, r -> Triple(i, d, r) },
+            repo.analysisRecordDao.observeForPatient(patientId),
+        ) { i, d, r, ar -> Quad(i, d, r, ar) },
         container.settings.settings,
     ) { db, calc, settings ->
-        val (patients, prescriptions, norms) = db
-        val (issues, drugs, rxs) = calc
+        val (patients, prescriptions, norms, analysisTypes) = db
+        val (issues, drugs, rxs, analysisRecords) = calc
         val today = Dates.today()
         withContext(Dispatchers.Default) {
             val drugById = drugs.associateBy { it.id }
@@ -111,9 +116,14 @@ class PatientCardViewModel(private val container: AppContainer) : ViewModel() {
                 views = views,
                 rxs = rxs,
                 threshold = settings.drugThresholdDays,
+                analysisTypes = analysisTypes,
+                analysisRecords = analysisRecords,
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), State())
+
+    /** combine() больше 5 Flow нельзя (грабли §7) — четвёрки через data class (componentN gratis). */
+    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     fun archive(id: Long) {
         viewModelScope.launch {
@@ -178,10 +188,15 @@ fun PatientCardScreen(
     val vm = appViewModel { PatientCardViewModel(it) }
     val stateFlow = remember(patientId) { vm.state(patientId) }
     val state by stateFlow.collectAsStateWithLifecycle()
+    // отдельный VM анализов для формы записи (Ф3.5), скоуп этого экрана
+    val analysesVm = appViewModel { AnalysesViewModel(it) }
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var confirmDelete by remember { mutableStateOf(false) }
     var showDocDialog by remember { mutableStateOf<java.io.File?>(null) }
+    var showAnalysisRecord by remember { mutableStateOf(false) }
+    var addRecordType by remember { mutableStateOf<Long?>(null) }
+    var editRecord by remember { mutableStateOf<ru.danil.medtracker.data.db.AnalysisRecord?>(null) }
 
     val patient = state.patient
 
@@ -331,6 +346,68 @@ fun PatientCardScreen(
                 }
             }
 
+            // Анализы (Ф3.5): записи всех видов, доступно любому пациенту
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)) {
+                    Text("Анализы", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { addRecordType = null; showAnalysisRecord = true }) { Text("+ запись") }
+                }
+            }
+            if (state.analysisTypes.isEmpty()) {
+                item {
+                    Text(
+                        "Виды анализов создаётся во вкладке «Анализы»",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                items(state.analysisTypes.size) { idx ->
+                    val t = state.analysisTypes[idx]
+                    val last = state.analysisRecords.firstOrNull { it.typeId == t.id }
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable {
+                                editRecord = last
+                                addRecordType = t.id
+                                showAnalysisRecord = true
+                            },
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(t.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                                if (last != null) {
+                                    Text(
+                                        formatValue(last.value) + (t.unit?.let { " $it" } ?: "") +
+                                            " · ${Dates.formatRu(last.date)}" +
+                                            (last.note?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    Text(
+                                        "нет записей",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            val due = ru.danil.medtracker.data.AnalysisLogic.statusFor(state.analysisRecords, t, java.time.LocalDate.now())
+                            val (label, color) = when (due) {
+                                is ru.danil.medtracker.data.AnalysisDue.NoData -> "нет данных" to MaterialTheme.colorScheme.onSurfaceVariant
+                                is ru.danil.medtracker.data.AnalysisDue.Due ->
+                                    if (due.overdueDays > 0) "пора сдавать" to androidx.compose.ui.graphics.Color(0xFFC62828)
+                                    else "пора сдавать" to androidx.compose.ui.graphics.Color(0xFFF9A825)
+                                is ru.danil.medtracker.data.AnalysisDue.InTime -> "в срок" to androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                            }
+                            Text(label, style = MaterialTheme.typography.labelLarge, color = color, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
             // Рецепты
             item {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
@@ -423,6 +500,20 @@ fun PatientCardScreen(
                     ru.danil.medtracker.docx.DocxShare.saveViaSaf(context, file)
                     showDocDialog = null
                 }) { Text("Сохранить") }
+            },
+        )
+    }
+
+    if (showAnalysisRecord) {
+        AnalysisRecordDialog(
+            vm = analysesVm,
+            patientId = patientId,
+            initialTypeId = addRecordType,
+            existing = editRecord,
+            onDismiss = {
+                showAnalysisRecord = false
+                editRecord = null
+                addRecordType = null
             },
         )
     }

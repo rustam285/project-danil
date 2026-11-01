@@ -41,6 +41,11 @@
             android:name=".notify.AlarmReceiver"
             android:exported="false" />
 
+        <!-- Напоминания об анализах: отдельный будильник (Ф3.7 п.6) -->
+        <receiver
+            android:name=".notify.AnalysisAlarmReceiver"
+            android:exported="false" />
+
         <!-- Перепланирование после перезагрузки/обновления (п. 7.1) -->
         <receiver
             android:name=".notify.BootReceiver"

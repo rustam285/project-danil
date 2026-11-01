@@ -10,6 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.encodeToString
 import java.util.UUID
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
@@ -33,6 +34,10 @@ data class AppSettings(
     val lastBackupAt: Long = 0,
     /** Чтобы сводное уведомление было одно в день (п. 7.2) */
     val lastNotifiedDay: Long = 0,
+    /** Чтобы напоминаний об анализах было не больше серии в день (Ф3.7) */
+    val lastAnalysisNotifiedDay: Long = 0,
+    /** patientId → epochDay последнего напоминания «нет данных» (Ф3.7 п.2: не чаще раза в 7 дней). Служебное, в копию не входит. */
+    val analysisNoDataRemindedJson: String = "{}",
     val hyperOsHintShown: Boolean = false,
 )
 
@@ -51,6 +56,8 @@ class SettingsStore(private val context: Context) {
         val LAST_FULL_AT = longPreferencesKey("last_full_at")
         val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
         val LAST_NOTIFIED_DAY = longPreferencesKey("last_notified_day")
+        val ANALYSIS_NOTIFIED_DAY = longPreferencesKey("analysis_notified_day")
+        val ANALYSIS_NODATA_REMINDED = stringPreferencesKey("analysis_nodata_reminded")
         val HYPEROS_SHOWN = booleanPreferencesKey("hyperos_shown")
     }
 
@@ -68,6 +75,8 @@ class SettingsStore(private val context: Context) {
             lastFullAt = p[Keys.LAST_FULL_AT] ?: 0,
             lastBackupAt = p[Keys.LAST_BACKUP_AT] ?: 0,
             lastNotifiedDay = p[Keys.LAST_NOTIFIED_DAY] ?: 0,
+            lastAnalysisNotifiedDay = p[Keys.ANALYSIS_NOTIFIED_DAY] ?: 0,
+            analysisNoDataRemindedJson = p[Keys.ANALYSIS_NODATA_REMINDED] ?: "{}",
             hyperOsHintShown = p[Keys.HYPEROS_SHOWN] ?: false,
         )
     }
@@ -84,6 +93,16 @@ class SettingsStore(private val context: Context) {
     suspend fun setBackupTime(minutes: Int) = context.dataStore.edit { it[Keys.BACKUP_TIME] = minutes }
     suspend fun setHyperOsShown() = context.dataStore.edit { it[Keys.HYPEROS_SHOWN] = true }
     suspend fun setLastNotifiedDay(day: Long) = context.dataStore.edit { it[Keys.LAST_NOTIFIED_DAY] = day }
+    suspend fun setLastAnalysisNotifiedDay(day: Long) = context.dataStore.edit { it[Keys.ANALYSIS_NOTIFIED_DAY] = day }
+
+    /** patientId → epochDay последнего напоминания «нет данных» (Ф3.7 п.2). */
+    fun analysisNoDataReminded(s: AppSettings): Map<Long, Long> = runCatching {
+        kotlinx.serialization.json.Json.decodeFromString<Map<Long, Long>>(s.analysisNoDataRemindedJson)
+    }.getOrDefault(emptyMap())
+
+    suspend fun setAnalysisNoDataReminded(map: Map<Long, Long>) = context.dataStore.edit {
+        it[Keys.ANALYSIS_NODATA_REMINDED] = kotlinx.serialization.json.Json.encodeToString(map)
+    }
 
     suspend fun markFullBackup(fullId: String, at: Long) = context.dataStore.edit {
         it[Keys.LAST_FULL_ID] = fullId

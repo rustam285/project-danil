@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -73,6 +74,7 @@ class PatientEditViewModel(private val container: AppContainer) : ViewModel() {
                 diagnosis = draft.diagnosis?.trim()?.ifEmpty { null },
                 doctor = draft.doctor?.trim()?.ifEmpty { null },
                 notes = draft.notes,
+                isDiabetic = draft.isDiabetic,
                 archived = false,
                 updatedAt = t,
             )
@@ -97,6 +99,8 @@ data class PatientDraft(
     var diagnosis: String? = null,
     var doctor: String? = null,
     var notes: String = "",
+    /** Пометка «Диабет» — вместе с МКБ E10/E11 включает во вкладку «Анализы» (Ф3.6) */
+    var isDiabetic: Boolean = false,
 )
 
 fun Patient.toDraft() = PatientDraft(
@@ -113,6 +117,7 @@ fun Patient.toDraft() = PatientDraft(
     diagnosis = diagnosis,
     doctor = doctor,
     notes = notes,
+    isDiabetic = isDiabetic,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -146,6 +151,7 @@ fun PatientEditScreen(
     var diagnosis by remember(loaded) { mutableStateOf(draft.diagnosis ?: "") }
     var doctor by remember(loaded) { mutableStateOf(draft.doctor ?: "") }
     var notes by remember(loaded) { mutableStateOf(draft.notes) }
+    var isDiabetic by remember(loaded) { mutableStateOf(draft.isDiabetic) }
 
     val today = Dates.today()
     val birthInFuture = birth != null && birth!!.isAfter(today)
@@ -213,6 +219,18 @@ fun PatientEditScreen(
             OutlinedTextField(phone2, { phone2 = it }, label = { Text("Телефон 2") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(cardNo, { cardNo = it }, label = { Text("№ амбулаторной карты") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(diagnosis, { diagnosis = it }, label = { Text("Диагноз / код МКБ (например E10)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            // Пометка «Диабет» (Ф3.6): сама или по МКБ E10/E11 включает вкладку «Анализы»
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = isDiabetic, onCheckedChange = { isDiabetic = it })
+                Column(Modifier.padding(start = 8.dp)) {
+                    Text("Диабет")
+                    Text(
+                        "Пациент попадёт во вкладку «Анализы» (самостоятельно или по МКБ E10/E11)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             OutlinedTextField(doctor, { doctor = it }, label = { Text("Лечащий врач") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(notes, { notes = it }, label = { Text("Заметки плана наблюдения (в план ДН)") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
 
@@ -226,7 +244,7 @@ fun PatientEditScreen(
                                 benefits = benefits, repName = repName,
                                 phone1 = phone1, phone2 = phone2,
                                 cardNo = cardNo, diagnosis = diagnosis,
-                                doctor = doctor, notes = notes,
+                                doctor = doctor, notes = notes, isDiabetic = isDiabetic,
                             ),
                         )
                     },

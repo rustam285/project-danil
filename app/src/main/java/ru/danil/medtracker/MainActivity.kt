@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -31,6 +32,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import ru.danil.medtracker.data.AppSettings
+import ru.danil.medtracker.ui.screens.AnalysesScreen
 import ru.danil.medtracker.ui.screens.IssueFormScreen
 import ru.danil.medtracker.ui.screens.OnboardingScreen
 import ru.danil.medtracker.ui.screens.PatientCardScreen
@@ -48,6 +50,7 @@ import ru.danil.medtracker.ui.theme.MedTrackerTheme
 object Routes {
     const val ONBOARDING = "onboarding"
     const val PATIENTS = "patients"
+    const val ANALYSES = "analyses"
     const val URGENT = "urgent"
     const val RX_SCAN = "rxScan"
     const val SETTINGS = "settings"
@@ -85,9 +88,10 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
         }
         val openUrgent = intent?.getBooleanExtra("openUrgent", false) == true
+        val openAnalyses = intent?.getBooleanExtra("openAnalyses", false) == true
         setContent {
             MedTrackerTheme {
-                MedTrackerApp(startAtUrgent = openUrgent)
+                MedTrackerApp(startAtUrgent = openUrgent, startAtAnalyses = openAnalyses)
             }
         }
     }
@@ -96,15 +100,17 @@ class MainActivity : ComponentActivity() {
 private data class Tab(val route: String, val label: String, val icon: @Composable () -> Unit)
 
 @Composable
-fun MedTrackerApp(startAtUrgent: Boolean) {
+fun MedTrackerApp(startAtUrgent: Boolean, startAtAnalyses: Boolean = false) {
     val nav = rememberNavController()
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val onboardingDone = container.settings.settings
         .collectAsStateWithLifecycle(initialValue = AppSettings()).value.onboardingDone
 
+    // 5 вкладок (Ф3.1): Пациенты, Анализы, Срочное, Рецепт, Настройки
     val tabs = listOf(
         Tab(Routes.PATIENTS, "Пациенты") { Icon(Icons.Filled.Person, null) },
+        Tab(Routes.ANALYSES, "Анализы") { Icon(Icons.Filled.Science, null) },
         Tab(Routes.URGENT, "Срочное") { Icon(Icons.Filled.NotificationsActive, null) },
         Tab(Routes.RX_SCAN, "Рецепт") { Icon(Icons.Filled.CameraAlt, null) },
         Tab(Routes.SETTINGS, "Настройки") { Icon(Icons.Filled.Settings, null) },
@@ -142,6 +148,7 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                 startDestination = when {
                     !onboardingDone -> Routes.ONBOARDING
                     startAtUrgent -> Routes.URGENT
+                    startAtAnalyses -> Routes.ANALYSES
                     else -> Routes.PATIENTS
                 },
                 modifier = Modifier.padding(padding),
@@ -155,6 +162,11 @@ fun MedTrackerApp(startAtUrgent: Boolean) {
                     PatientsScreen(
                         onOpenPatient = { nav.navigate(Routes.patient(it)) },
                         onAddPatient = { nav.navigate(Routes.patientEdit(null)) },
+                    )
+                }
+                composable(Routes.ANALYSES) {
+                    AnalysesScreen(
+                        onOpenPatient = { nav.navigate(Routes.patient(it)) },
                     )
                 }
                 composable(Routes.URGENT) {
