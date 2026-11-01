@@ -178,6 +178,10 @@ interface RxDao {
     @Query("SELECT * FROM rxs WHERE status = 'ISSUED'")
     fun observeAllIssued(): Flow<List<Rx>>
 
+    /** Ранее введённые врачи — подсказки для поля «Врач» (Ф4.3). */
+    @Query("SELECT DISTINCT doctor FROM rxs WHERE doctor IS NOT NULL AND TRIM(doctor) != '' ORDER BY doctor COLLATE NOCASE")
+    suspend fun distinctDoctors(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(r: Rx): Long
 
@@ -192,6 +196,69 @@ interface RxDao {
 
     @Query("DELETE FROM rxs WHERE patientId = :patientId")
     suspend fun deleteForPatient(patientId: Long)
+}
+
+@Dao
+interface AnalysisTypeDao {
+    @Query("SELECT * FROM analysis_types ORDER BY isBuiltIn DESC, name COLLATE NOCASE")
+    fun observeAll(): Flow<List<AnalysisType>>
+
+    @Query("SELECT * FROM analysis_types ORDER BY isBuiltIn DESC, name COLLATE NOCASE")
+    suspend fun all(): List<AnalysisType>
+
+    @Query("SELECT * FROM analysis_types WHERE id = :id")
+    suspend fun byId(id: Long): AnalysisType?
+
+    @Query("SELECT * FROM analysis_types WHERE isBuiltIn = 1 LIMIT 1")
+    suspend fun builtIn(): AnalysisType?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(t: AnalysisType): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(list: List<AnalysisType>)
+
+    @Update
+    suspend fun update(t: AnalysisType)
+
+    @Query("DELETE FROM analysis_types WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Dao
+interface AnalysisRecordDao {
+    @Query("SELECT * FROM analysis_records WHERE patientId = :patientId ORDER BY date DESC, id DESC")
+    fun observeForPatient(patientId: Long): Flow<List<AnalysisRecord>>
+
+    @Query("SELECT * FROM analysis_records WHERE patientId = :patientId ORDER BY date DESC, id DESC")
+    suspend fun forPatient(patientId: Long): List<AnalysisRecord>
+
+    @Query("SELECT * FROM analysis_records")
+    suspend fun all(): List<AnalysisRecord>
+
+    @Query("SELECT * FROM analysis_records")
+    fun observeAll(): Flow<List<AnalysisRecord>>
+
+    @Query("SELECT * FROM analysis_records WHERE id = :id")
+    suspend fun byId(id: Long): AnalysisRecord?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(r: AnalysisRecord): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(list: List<AnalysisRecord>)
+
+    @Update
+    suspend fun update(r: AnalysisRecord)
+
+    @Query("DELETE FROM analysis_records WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM analysis_records WHERE patientId = :patientId")
+    suspend fun deleteForPatient(patientId: Long)
+
+    @Query("DELETE FROM analysis_records WHERE typeId = :typeId")
+    suspend fun deleteForType(typeId: Long)
 }
 
 @Dao
@@ -222,6 +289,7 @@ abstract class CoreDao {
         normDao: NormDao,
         issueDao: IssueDao,
         rxDao: RxDao,
+        analysisRecordDao: AnalysisRecordDao,
         patientId: Long,
     ) {
         val now = System.currentTimeMillis()
@@ -236,6 +304,11 @@ abstract class CoreDao {
             insertTombstoneRaw(Tombstone(entityType = "rx", entityId = r.id, deletedAt = now))
         }
         rxDao.deleteForPatient(patientId)
+        // записи анализов пациента — с tombstones для дельта-копий (Ф3/§9)
+        for (r in analysisRecordDao.forPatient(patientId)) {
+            insertTombstoneRaw(Tombstone(entityType = "analysis_record", entityId = r.id, deletedAt = now))
+        }
+        analysisRecordDao.deleteForPatient(patientId)
         patientDao.delete(patientId)
         insertTombstoneRaw(Tombstone(entityType = "patient", entityId = patientId, deletedAt = now))
     }
@@ -252,5 +325,21 @@ abstract class CoreDao {
         normDao.deleteForPrescription(prescriptionId)
         prescriptionDao.delete(prescriptionId)
         insertTombstoneRaw(Tombstone(entityType = "prescription", entityId = prescriptionId, deletedAt = now))
+    }
+
+    /** Удаление вида анализа: записи каскадно, всё — с tombstones (Ф3.3, §9). */
+    @Transaction
+    open suspend fun deleteAnalysisTypeCascade(
+        analysisTypeDao: AnalysisTypeDao,
+        analysisRecordDao: AnalysisRecordDao,
+        typeId: Long,
+    ) {
+        val now = System.currentTimeMillis()
+        for (r in analysisRecordDao.all().filter { it.typeId == typeId }) {
+            insertTombstoneRaw(Tombstone(entityType = "analysis_record", entityId = r.id, deletedAt = now))
+        }
+        analysisRecordDao.deleteForType(typeId)
+        analysisTypeDao.delete(typeId)
+        insertTombstoneRaw(Tombstone(entityType = "analysis_type", entityId = typeId, deletedAt = now))
     }
 }

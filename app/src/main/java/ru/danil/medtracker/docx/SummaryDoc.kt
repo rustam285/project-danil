@@ -52,7 +52,9 @@ object SummaryDoc {
 
         val rows = sortedMapOf<String, Row>(String.CASE_INSENSITIVE_ORDER)
 
-        for (p in input.prescriptions.filter { it.status == "ACTIVE" }) {
+        // резервные схемы в «Сводной потребности» не участвуют: документ планирует закупку
+        // по основным схемам (Ф2.7 ТЗ 1.2.0)
+        for (p in input.prescriptions.filter { it.status == "ACTIVE" && !it.isReserve }) {
             val patient = activePatients[p.patientId] ?: continue
             val drug = drugById[p.drugId] ?: continue
             val norms = normsByP[p.id].orEmpty()

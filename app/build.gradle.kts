@@ -82,6 +82,14 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+    // Схемы Room для тестов миграции (ТЗ 1.2.0 §9): app/schemas/<db>/<version>.json
+    sourceSets {
+        getByName("androidTest").assets.srcDir(files("$projectDir/schemas"))
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -120,4 +128,5 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.room.testing)
 }

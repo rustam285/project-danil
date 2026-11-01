@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -190,6 +191,59 @@ fun IntField(
         singleLine = true,
         modifier = modifier,
     )
+}
+
+/**
+ * Поле времени «ЧЧ:ММ» с Material 3 TimePicker в диалоге (Ф5.1: не чипы и не ручной ввод).
+ * Значение — минуты от полуночи.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TimePickerField(
+    label: String,
+    minutes: Int,
+    onPick: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+
+    OutlinedTextField(
+        value = "%02d:%02d".format(minutes / 60, minutes % 60),
+        onValueChange = {},
+        readOnly = true,
+        label = { Text(label) },
+        trailingIcon = {
+            IconButton(onClick = { showPicker = true }) {
+                Icon(Icons.Filled.Schedule, contentDescription = "Выбрать время")
+            }
+        },
+        singleLine = true,
+        modifier = modifier.clickable { showPicker = true },
+    )
+
+    if (showPicker) {
+        val state = androidx.compose.material3.rememberTimePickerState(
+            initialHour = minutes / 60,
+            initialMinute = minutes % 60,
+            is24Hour = true,
+        )
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text(label) },
+            text = { androidx.compose.material3.TimePicker(state = state) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onPick(state.hour * 60 + state.minute)
+                        showPicker = false
+                    },
+                ) { Text("Выбрать") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Отмена") }
+            },
+        )
+    }
 }
 
 /** Строка «метка: значение» для шапок. */

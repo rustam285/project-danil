@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -237,11 +238,21 @@ fun PrescriptionScreen(
                         // «В ожидании поступления» (п. 3.3): препарат закончился, нет на складе
                         state.prescription?.let { p ->
                             Spacer(Modifier.height(4.dp))
-                            FilterChip(
-                                selected = state.awaitingRestock,
-                                onClick = { vm.setAwaiting(p.id, !state.awaitingRestock) },
-                                label = { Text("В ожидании поступления") },
-                            )
+                            androidx.compose.foundation.layout.Row(
+                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (p.isReserve) {
+                                    AssistChip(onClick = {
+                                        // правка признака — в экране редактирования назначения
+                                        onEdit(p.patientId, p.id)
+                                    }, label = { Text("Резерв") })
+                                }
+                                FilterChip(
+                                    selected = state.awaitingRestock,
+                                    onClick = { vm.setAwaiting(p.id, !state.awaitingRestock) },
+                                    label = { Text("В ожидании поступления") },
+                                )
+                            }
                         }
                     }
                 }

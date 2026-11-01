@@ -21,7 +21,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -53,6 +52,7 @@ import ru.danil.medtracker.data.AppContainer
 import ru.danil.medtracker.data.AppSettings
 import ru.danil.medtracker.notify.AlarmScheduler
 import ru.danil.medtracker.ui.IntField
+import ru.danil.medtracker.ui.TimePickerField
 import ru.danil.medtracker.ui.appViewModel
 import ru.danil.medtracker.util.Dates
 
@@ -145,6 +145,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         container.settings.setCheckTime(minutes)
     }
 
+    fun setAnalysisTime(minutes: Int) = viewModelScope.launch {
+        container.settings.setAnalysisTime(minutes)
+    }
+
     fun setDrugThreshold(days: Int) = viewModelScope.launch {
         container.settings.setDrugThreshold(days)
     }
@@ -154,7 +158,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen() {
     val vm = appViewModel { SettingsViewModel(it) }
@@ -187,7 +191,7 @@ fun SettingsScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── Уведомления (п. 5.7) ──
+            // ── Уведомления (п. 5.7, Ф5.1) ──
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Уведомления", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -204,13 +208,23 @@ fun SettingsScreen() {
                             },
                         )
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Время проверки: %02d:%02d".format(settings.checkTimeMinutes / 60, settings.checkTimeMinutes % 60), Modifier.weight(1f))
-                    }
-                    TimeSelector(settings.checkTimeMinutes) { minutes ->
-                        vm.setCheckTime(minutes)
-                        AlarmScheduler.scheduleNext(context, settings.copy(checkTimeMinutes = minutes))
-                    }
+                    // Время сводки — полноценный TimePicker (Ф5.1), не чипы
+                    TimePickerField(
+                        "Время ежедневной сводки",
+                        settings.checkTimeMinutes,
+                        { minutes ->
+                            vm.setCheckTime(minutes)
+                            AlarmScheduler.scheduleNext(context, settings.copy(checkTimeMinutes = minutes))
+                        },
+                        Modifier.fillMaxWidth(),
+                    )
+                    // Время напоминаний об анализах — отдельный будильник (Ф3.7, Ф5.1)
+                    TimePickerField(
+                        "Время напоминаний об анализах",
+                        settings.analysisTimeMinutes,
+                        { minutes -> vm.setAnalysisTime(minutes) },
+                        Modifier.fillMaxWidth(),
+                    )
                     Text("Порог для лекарств, дней", style = MaterialTheme.typography.titleSmall)
                     IntField("Порог лекарств (дней)", settings.drugThresholdDays, { v ->
                         if (v != null && v in 1..60) vm.setDrugThreshold(v)
@@ -231,14 +245,17 @@ fun SettingsScreen() {
                         else "Каталог выбран" + (if (settings.lastFullAt > 0) " · последняя копия: ${Dates.formatRu(java.time.LocalDate.ofEpochDay(settings.lastBackupAt / 86400000))}" else ""),
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // FlowRow (Ф5.2): кнопки переносятся строками, а не сжимаются
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         OutlinedButton(onClick = { treeLauncher.launch(null) }) { Text("Выбрать каталог") }
                         Button(onClick = { vm.createFull(context) }, enabled = !busy && settings.backupTreeUri.isNotBlank()) { Text("Полная копия") }
                         OutlinedButton(onClick = { vm.createDelta(context) }, enabled = !busy && settings.lastFullAt > 0) { Text("Быстрая") }
+                        OutlinedButton(onClick = {
+                            restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                        }) { Text("Восстановить…") }
                     }
-                    OutlinedButton(onClick = {
-                        restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
-                    }) { Text("Восстановить…") }
                     if (busy) CircularProgressIndicator(Modifier.height(20.dp))
 
                     if (backups.isNotEmpty()) {
@@ -322,19 +339,5 @@ fun SettingsScreen() {
             },
             dismissButton = { TextButton(onClick = { vm.restorePreview.value = null }) { Text("Отмена") } },
         )
-    }
-}
-
-@Composable
-private fun TimeSelector(minutes: Int, onPick: (Int) -> Unit) {
-    val hours = minutes / 60
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf(7, 8, 9, 10, 12).forEach { h ->
-            FilterChip(
-                selected = hours == h,
-                onClick = { onPick(h * 60 + minutes % 60) },
-                label = { Text("%02d:00".format(h)) },
-            )
-        }
     }
 }

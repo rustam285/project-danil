@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -86,16 +87,23 @@ class PrescriptionEditViewModel(private val container: AppContainer) : ViewModel
         drug: Drug,
         normDraft: NormDraft,
         initialBalance: InitialBalanceDraft?,
+        isReserve: Boolean = false,
     ) {
         viewModelScope.launch {
             try {
                 val t = System.currentTimeMillis()
                 val prescription = existingPrescription
-                    ?: Prescription(patientId = patientId, drugId = drug.id, createdAt = t, updatedAt = t)
+                    ?: Prescription(
+                        patientId = patientId,
+                        drugId = drug.id,
+                        isReserve = isReserve,
+                        createdAt = t,
+                        updatedAt = t,
+                    )
                 val pid = if (existingPrescription == null) {
                     repo.prescriptionDao.insert(prescription)
                 } else {
-                    repo.prescriptionDao.update(prescription.copy(drugId = drug.id, updatedAt = t))
+                    repo.prescriptionDao.update(prescription.copy(drugId = drug.id, isReserve = isReserve, updatedAt = t))
                     existingPrescription.id
                 }
                 if (normDraft.isValid) {
@@ -200,6 +208,7 @@ fun PrescriptionEditScreen(
     var norm by remember { mutableStateOf(NormDraft()) }
     var initialBalance by remember { mutableStateOf(InitialBalanceDraft()) }
     var showInitialBalance by remember { mutableStateOf(false) }
+    var isReserve by remember(existingPrescription) { mutableStateOf(existingPrescription?.isReserve ?: false) }
     var localError by remember { mutableStateOf<String?>(null) }
 
     val mePreview = selectedDrug?.mePerPiece()?.let { mePerPiece ->
@@ -222,13 +231,28 @@ fun PrescriptionEditScreen(
         ) {
             Text("Препарат", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
-                value = selectedDrug?.let { "${it.name} — ${ru.danil.medtracker.calc.CalcService.drugForm(it)}" } ?: "",
+                value = selectedDrug?.let {
+                    "${it.name}${if (it.isDevice) " (устройство)" else ""} — ${ru.danil.medtracker.calc.CalcService.drugForm(it)}"
+                } ?: "",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text(if (selectedDrug == null) "Выберите или создайте" else "Препарат") },
                 trailingIcon = { TextButton(onClick = { showDrugDialog = true }) { Text("Выбрать") } },
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            // Резервная схема (Ф2.1): скрыто из «Срочного», без уведомлений; расчёт ведётся
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Switch(checked = isReserve, onCheckedChange = { isReserve = it })
+                Column(Modifier.padding(start = 8.dp)) {
+                    Text("Резервная схема")
+                    Text(
+                        "Скрыто из «Срочного», уведомлений нет; расчёт «обеспечен до» ведётся",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             Text("Норма выдачи", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
             DatePickerField("Действует с", norm.validFrom, { norm = norm.copy(validFrom = it ?: LocalDate.now()) }, Modifier.fillMaxWidth())
@@ -301,7 +325,7 @@ fun PrescriptionEditScreen(
                         else -> null
                     }
                     if (localError == null) {
-                        vm.save(existingPrescription, patientId, drug!!, norm, if (showInitialBalance) initialBalance else null)
+                        vm.save(existingPrescription, patientId, drug!!, norm, if (showInitialBalance) initialBalance else null, isReserve)
                     }
                 },
                 enabled = selectedDrug != null,
@@ -322,16 +346,24 @@ fun PrescriptionEditScreen(
                     LazyColumn(Modifier.fillMaxWidth().height(320.dp)) {
                         items(drugs.size) { idx ->
                             val drug = drugs[idx]
-                            Text(
-                                drug.name,
-                                modifier = Modifier
+                            Column(
+                                Modifier
                                     .fillMaxWidth()
                                     .clickable {
                                         selectedDrug = drug
                                         showDrugDialog = false
                                     }
                                     .padding(10.dp),
-                            )
+                            ) {
+                                Text(drug.name)
+                                if (drug.isDevice) {
+                                    Text(
+                                        "устройство",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -369,6 +401,7 @@ fun DrugCreateDialog(
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(ru.danil.medtracker.data.db.DrugKind.DRUG) }
     var category by remember { mutableStateOf("Лекарство") }
     var unit by remember { mutableStateOf("упаковка") }
     var piecesPerPack by remember { mutableStateOf("1") }
@@ -379,7 +412,7 @@ fun DrugCreateDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новый препарат") },
+        title = { Text(if (kind == ru.danil.medtracker.data.db.DrugKind.DEVICE) "Новое устройство" else "Новый препарат") },
         text = {
             Column(
                 Modifier
@@ -395,10 +428,34 @@ fun DrugCreateDialog(
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
                 Column {
-                    Text("Категория", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Вид позиции", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("Лекарство", "Расходник", "Питание").forEach { c ->
-                            FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) })
+                        FilterChip(
+                            selected = kind == ru.danil.medtracker.data.db.DrugKind.DRUG,
+                            onClick = { kind = ru.danil.medtracker.data.db.DrugKind.DRUG },
+                            label = { Text("препарат") },
+                        )
+                        FilterChip(
+                            selected = kind == ru.danil.medtracker.data.db.DrugKind.DEVICE,
+                            onClick = { kind = ru.danil.medtracker.data.db.DrugKind.DEVICE },
+                            label = { Text("устройство") },
+                        )
+                    }
+                    if (kind == ru.danil.medtracker.data.db.DrugKind.DEVICE) {
+                        Text(
+                            "Тест-полоски, глюкометр, шприц-ручки и т.п. — штучный расчёт как у препаратов",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (kind == ru.danil.medtracker.data.db.DrugKind.DRUG) {
+                    Column {
+                        Text("Категория", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("Лекарство", "Расходник", "Питание").forEach { c ->
+                                FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) })
+                            }
                         }
                     }
                 }
@@ -438,7 +495,8 @@ fun DrugCreateDialog(
                     onCreate(
                         Drug(
                             name = name.trim(),
-                            category = category,
+                            kind = kind,
+                            category = if (kind == ru.danil.medtracker.data.db.DrugKind.DEVICE) null else category,
                             unit = unit,
                             piecesPerPack = (piecesPerPack.toIntOrNull() ?: 1).coerceAtLeast(1),
                             concMePerMl = concMe.toIntOrNull(),

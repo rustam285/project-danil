@@ -125,9 +125,15 @@ class PatientCardViewModel(private val container: AppContainer) : ViewModel() {
     fun deleteForever(id: Long) {
         viewModelScope.launch {
             repo.coreDao.deletePatientCascade(
-                repo.patientDao, repo.prescriptionDao, repo.normDao, repo.issueDao, repo.rxDao, id,
+                repo.patientDao, repo.prescriptionDao, repo.normDao, repo.issueDao, repo.rxDao,
+                repo.analysisRecordDao, id,
             )
         }
+    }
+
+    /** «В ожидании поступления» для резервного препарата в карточке (Ф2.6). */
+    fun setAwaiting(id: Long, awaiting: Boolean) {
+        viewModelScope.launch { repo.setAwaitingRestock(id, awaiting) }
     }
 
     /** План ДН: генерация .docx во временный файл (п. 8.2). */
@@ -273,7 +279,7 @@ fun PatientCardScreen(
                 }
             }
 
-            // Назначения (п. 5.3)
+            // Назначения (п. 5.3); резервные схемы — отдельной секцией ниже (Ф2.4)
             item {
                 Text("Назначения", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
                 Text(
@@ -282,55 +288,46 @@ fun PatientCardScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (state.views.isEmpty()) {
+            val normalViews = state.views.filter { !it.prescription.isReserve }
+            val reserveViews = state.views.filter { it.prescription.isReserve }
+            if (normalViews.isEmpty() && reserveViews.isEmpty()) {
                 item { EmptyState("Назначений пока нет — добавьте первое", "Добавить назначение") { onAddPrescription(patientId) } }
             } else {
-                items(state.views.size) { idx ->
-                    val v = state.views[idx]
-                    Card(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { onOpenPrescription(v.prescription.id) },
-                    ) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(v.drug.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    if (v.noCalc) "без расчёта срока" else CalcService.normShort(CalcService.currentNorm(v.norms)),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                if (!v.noCalc) {
-                                    val rem = v.remainder.toDisplay()
-                                    val ppp = v.drug.piecesPerPack
-                                    val packs = v.remainder.div(ru.danil.medtracker.calc.Rational.of(ppp.toLong())).toDisplay()
-                                    Text(
-                                        if (ppp > 1) "остаток $rem шт ($packs уп)" else "остаток $rem шт",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                if (v.noCalc) {
-                                    Text("журнал", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                } else if (v.issues.isEmpty()) {
-                                    Text("выдач нет", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                } else if (v.isUnlimited) {
-                                    Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), fontWeight = FontWeight.SemiBold)
-                                } else {
-                                    SupplyBadge(v.coveredUntil, CalcService.level(v.coveredUntil, state.threshold))
-                                }
-                                if (v.prescription.awaitingRestock) {
-                                    Text("в ожидании поступления", style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color(0xFF00796B))
-                                }
-                            }
-                            // Контекстный быстрый ввод выдачи (п. 5.3)
-                            IconButton(onClick = { onAddIssue(v.prescription.id) }) {
-                                Icon(Icons.Filled.Add, "Выдать")
-                            }
-                        }
-                    }
+                items(normalViews.size) { idx ->
+                    PrescriptionRow(
+                        v = normalViews[idx],
+                        threshold = state.threshold,
+                        onOpenPrescription = onOpenPrescription,
+                        onAddIssue = onAddIssue,
+                        showReserveChip = false,
+                    )
+                }
+            }
+
+            // Резервные препараты (Ф2.4): расчёт как у обычных, из «Срочного» скрыты
+            if (reserveViews.isNotEmpty()) {
+                item {
+                    Text(
+                        "Резервные препараты",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                    )
+                    Text(
+                        "Резервные схемы: в «Срочное» не попадают, уведомлений нет",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(reserveViews.size) { idx ->
+                    PrescriptionRow(
+                        v = reserveViews[idx],
+                        threshold = state.threshold,
+                        onOpenPrescription = onOpenPrescription,
+                        onAddIssue = onAddIssue,
+                        showReserveChip = true,
+                        onToggleWaiting = { id, awaiting -> vm.setAwaiting(id, awaiting) },
+                    )
                 }
             }
 
@@ -366,7 +363,8 @@ fun PatientCardScreen(
                                             rx.status == "REDEEMED" -> "отоварен"
                                             expired -> "истёк"
                                             else -> "выписан"
-                                        },
+                                        } +
+                                        (rx.doctor?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -427,5 +425,83 @@ fun PatientCardScreen(
                 }) { Text("Сохранить") }
             },
         )
+    }
+}
+
+/** Строка назначения в карточке пациента; в резервной секции — чип «Резерв» и
+ *  кнопка «В ожидании поступления» у закончившегося препарата (Ф2.4, Ф2.6). */
+@Composable
+private fun PrescriptionRow(
+    v: PrescriptionView,
+    threshold: Int,
+    onOpenPrescription: (Long) -> Unit,
+    onAddIssue: (Long) -> Unit,
+    showReserveChip: Boolean,
+    onToggleWaiting: ((Long, Boolean) -> Unit)? = null,
+) {
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable { onOpenPrescription(v.prescription.id) },
+    ) {
+        Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(v.drug.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (v.noCalc) "без расчёта срока" else CalcService.normShort(CalcService.currentNorm(v.norms)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!v.noCalc) {
+                        val rem = v.remainder.toDisplay()
+                        val ppp = v.drug.piecesPerPack
+                        val packs = v.remainder.div(ru.danil.medtracker.calc.Rational.of(ppp.toLong())).toDisplay()
+                        Text(
+                            if (ppp > 1) "остаток $rem шт ($packs уп)" else "остаток $rem шт",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    if (showReserveChip) {
+                        Text(
+                            "Резерв",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.ui.graphics.Color(0xFF00796B),
+                        )
+                    }
+                    if (v.noCalc) {
+                        Text("журнал", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (v.issues.isEmpty()) {
+                        Text("выдач нет", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (v.isUnlimited) {
+                        Text("запас > 5 лет", color = androidx.compose.ui.graphics.Color(0xFF2E7D32), fontWeight = FontWeight.SemiBold)
+                    } else {
+                        SupplyBadge(v.coveredUntil, CalcService.level(v.coveredUntil, threshold))
+                    }
+                }
+                // Контекстный быстрый ввод выдачи (п. 5.3)
+                IconButton(onClick = { onAddIssue(v.prescription.id) }) {
+                    Icon(Icons.Filled.Add, "Выдать")
+                }
+            }
+            if (v.prescription.awaitingRestock) {
+                Text(
+                    "ожидается поставка",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = androidx.compose.ui.graphics.Color(0xFF00796B),
+                )
+                if (onToggleWaiting != null) {
+                    TextButton(onClick = { onToggleWaiting(v.prescription.id, false) }) { Text("Снять") }
+                }
+            } else if (onToggleWaiting != null && v.issues.isNotEmpty() &&
+                v.coveredUntil?.isBefore(java.time.LocalDate.now()) == true
+            ) {
+                // закончившийся резервный препарат можно пометить «нет на складе» (Ф2.6)
+                TextButton(onClick = { onToggleWaiting(v.prescription.id, true) }) { Text("В ожидании поступления") }
+            }
+        }
     }
 }

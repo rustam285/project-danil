@@ -63,7 +63,7 @@ class BackupManager(private val container: AppContainer, private val context: Co
         return "MedTracker_${prefix}_${fmt.format(Date())}.$ext"
     }
 
-    /** Полная копия: база целиком в JSON + все фото (п. 9.1). */
+    /** Полная копия: база целиком в JSON + все фото (п. 9.1). Настройки — переносимый блок (Ф5.3). */
     suspend fun createFull(): String {
         val tree = tree()
         val name = timestampName("полная", "mtbackup")
@@ -78,8 +78,21 @@ class BackupManager(private val container: AppContainer, private val context: Co
             val norms = repo.normDao.all()
             val issues = repo.issueDao.all()
             val rxs = repo.rxDao.all()
+            val analysisTypes = repo.analysisTypeDao.all()
+            val analysisRecords = repo.analysisRecordDao.all()
             val tombstones = repo.tombstoneDao.all()
-            val dbj = DbJson(patients, drugs, prescriptions, norms, issues, rxs, tombstones)
+            val s = settings.current()
+            val dbj = DbJson(
+                patients, drugs, prescriptions, norms, issues, rxs,
+                analysisTypes, analysisRecords, tombstones,
+                settings = BackupSettings(
+                    notificationsEnabled = s.notificationsEnabled,
+                    checkTimeMinutes = s.checkTimeMinutes,
+                    analysisTimeMinutes = s.analysisTimeMinutes,
+                    drugThresholdDays = s.drugThresholdDays,
+                    rxThresholdDays = s.rxThresholdDays,
+                ),
+            )
             buildZip(
                 manifest = BackupManifest(
                     schemaVersion = ru.danil.medtracker.data.db.AppDatabase.SCHEMA_VERSION,
@@ -94,6 +107,8 @@ class BackupManager(private val container: AppContainer, private val context: Co
                         "norms" to norms.size,
                         "issues" to issues.size,
                         "rxs" to rxs.size,
+                        "analysisTypes" to analysisTypes.size,
+                        "analysisRecords" to analysisRecords.size,
                         "photos" to collectAllPhotoNames(rxs).size,
                     ),
                 ),
@@ -123,10 +138,12 @@ class BackupManager(private val container: AppContainer, private val context: Co
             val norms = repo.normDao.all().filter { it.updatedAt > since }
             val issues = repo.issueDao.all().filter { it.updatedAt > since }
             val rxs = repo.rxDao.all().filter { it.updatedAt > since }
+            val analysisTypes = repo.analysisTypeDao.all().filter { it.updatedAt > since }
+            val analysisRecords = repo.analysisRecordDao.all().filter { it.updatedAt > since }
             val tombstones = repo.tombstoneDao.since(since)
             val photoNames = rxs.flatMap { it.photos() }.distinct()
                 .filter { PhotoStore.file(context, it).lastModified() > since }
-            val dbj = DbJson(patients, drugs, prescriptions, norms, issues, rxs, tombstones)
+            val dbj = DbJson(patients, drugs, prescriptions, norms, issues, rxs, analysisTypes, analysisRecords, tombstones)
             val seq = (readDeltasInChain(tree, s.lastFullId).maxOfOrNull { it.seq ?: 0 } ?: 0) + 1
             buildZip(
                 manifest = BackupManifest(
@@ -140,6 +157,7 @@ class BackupManager(private val container: AppContainer, private val context: Co
                     counts = mapOf(
                         "patients" to patients.size,
                         "issues" to issues.size,
+                        "analysisRecords" to analysisRecords.size,
                         "photos" to photoNames.size,
                         "tombstones" to tombstones.size,
                     ),
@@ -311,41 +329,8 @@ class BackupManager(private val container: AppContainer, private val context: Co
         )
     }
 
-    private fun merge(full: ParsedBackup, deltas: List<ParsedBackup>): DbJson {
-        var db = full.db
-        val allTombstones = (full.db.tombstones + deltas.flatMap { it.db.tombstones })
-        for (delta in deltas) {
-            fun <T> mergeList(old: List<T>, new: List<T>, idOf: (T) -> Long, updatedOf: (T) -> Long): List<T> {
-                val map = old.associateBy(idOf).toMutableMap()
-                for (n in new) {
-                    val cur = map[idOf(n)]
-                    if (cur == null || updatedOf(n) > updatedOf(cur)) map[idOf(n)] = n
-                }
-                return map.values.toList()
-            }
-            db = db.copy(
-                patients = mergeList(db.patients, delta.db.patients, { it.id }, { it.updatedAt }),
-                drugs = mergeList(db.drugs, delta.db.drugs, { it.id }, { it.updatedAt }),
-                prescriptions = mergeList(db.prescriptions, delta.db.prescriptions, { it.id }, { it.updatedAt }),
-                norms = mergeList(db.norms, delta.db.norms, { it.id }, { it.updatedAt }),
-                issues = mergeList(db.issues, delta.db.issues, { it.id }, { it.updatedAt }),
-                rxs = mergeList(db.rxs, delta.db.rxs, { it.id }, { it.updatedAt }),
-            )
-        }
-        // tombstones: удаляем воскресшее (п. 9.8)
-        val dead = allTombstones.map { it.entityType to it.entityId }.toSet()
-        fun <T> drop(list: List<T>, type: String, idOf: (T) -> Long) =
-            list.filter { ("$type" to idOf(it)) !in dead }
-        return db.copy(
-            patients = drop(db.patients, "patient") { it.id },
-            drugs = drop(db.drugs, "drug") { it.id },
-            prescriptions = drop(db.prescriptions, "prescription") { it.id },
-            norms = drop(db.norms, "norm") { it.id },
-            issues = drop(db.issues, "issue") { it.id },
-            rxs = drop(db.rxs, "rx") { it.id },
-            tombstones = allTombstones.distinctBy { it.entityType to it.entityId },
-        )
-    }
+    private fun merge(full: ParsedBackup, deltas: List<ParsedBackup>): DbJson =
+        BackupMerge.merge(full.db, deltas.map { it.db })
 
     /** Полное восстановление: предпросмотр уже подтверждён пользователем. */
     suspend fun restore(fullUri: Uri, deltaUris: List<Uri>) {
@@ -364,6 +349,8 @@ class BackupManager(private val container: AppContainer, private val context: Co
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             db.withTransaction {
                 db.openHelper.writableDatabase.apply {
+                    execSQL("DELETE FROM analysis_records")
+                    execSQL("DELETE FROM analysis_types")
                     execSQL("DELETE FROM patients")
                     execSQL("DELETE FROM drugs")
                     execSQL("DELETE FROM prescriptions")
@@ -378,7 +365,13 @@ class BackupManager(private val container: AppContainer, private val context: Co
                 merged.norms.forEach { db.normDao().insert(it) }
                 merged.issues.forEach { db.issueDao().insert(it) }
                 merged.rxs.forEach { db.rxDao().insert(it) }
+                merged.analysisTypes.forEach { db.analysisTypeDao().insert(it) }
+                merged.analysisRecords.forEach { db.analysisRecordDao().insert(it) }
                 merged.tombstones.forEach { db.tombstoneDao().insert(it) }
+                // копия v1.1.2 без таблиц анализов: восстановили пустоту — возвращаем встроенный HbA1c
+                if (merged.analysisTypes.none { it.isBuiltIn }) {
+                    ru.danil.medtracker.data.db.AnalysisSeed.seed(db.openHelper.writableDatabase)
+                }
             }
             // Фото: очистить и восстановить
             PhotoStore.dir(context).listFiles()?.forEach { it.delete() }
@@ -386,7 +379,23 @@ class BackupManager(private val container: AppContainer, private val context: Co
                 java.io.File(PhotoStore.dir(context), name).writeBytes(bytes)
             }
         }
+        // Переносимые настройки (Ф5.3): отсутствующий блок = значения по умолчанию
+        val restored = merged.settings ?: BackupSettings()
+        settings.apply {
+            setNotificationsEnabled(restored.notificationsEnabled)
+            setCheckTime(restored.checkTimeMinutes)
+            setAnalysisTime(restored.analysisTimeMinutes)
+            setDrugThreshold(restored.drugThresholdDays)
+            setRxThreshold(restored.rxThresholdDays)
+        }
         settings.markFullBackup(full.manifest.fullId, full.manifest.createdAt)
+        // Будильники перепланируются под восстановленное время (Ф5.3.5)
+        runCatching {
+            val s = settings.current()
+            if (s.notificationsEnabled) {
+                ru.danil.medtracker.notify.AlarmScheduler.scheduleNext(context, s)
+            }
+        }
     }
 
     /** Страховая полная копия перед восстановлением (п. 9.3). */

@@ -51,6 +51,32 @@ class TextMatchTest {
         assertEquals(1L, best.first().first.id)
     }
 
+    /** Ф4.2: подбор работает и по устройствам (вид позиции не влияет на сопоставление). */
+    @Test
+    fun bestMatchesFindsDevice() {
+        val devices = listOf(
+            Drug(id = 5, name = "Глюкометр Контур ТС", kind = ru.danil.medtracker.data.db.DrugKind.DEVICE),
+            Drug(id = 6, name = "Тест-полоски Контур Плюс", kind = ru.danil.medtracker.data.db.DrugKind.DEVICE),
+        )
+        val best = TextMatch.bestMatches(listOf("ГЛЮКОМЕТР КОНТУР ТС №1"), devices, nameOf = { it.name })
+        assertEquals(5L, best.first().first.id)
+        assertTrue(best.first().first.isDevice)
+    }
+
+    /** Ф4.2: при нескольких кандидатах — список для ручного выбора, а не пустой результат. */
+    @Test
+    fun ambiguousCandidates_returnSeveral() {
+        val items = listOf(
+            Drug(id = 1, name = "Тест-полоски Ван Тач"),
+            Drug(id = 2, name = "Тест-полоски Ван Тач Селект"),
+            Drug(id = 3, name = "Тест-полоски Ван Тач Плюс"),
+        )
+        val best = TextMatch.bestMatches(listOf("Тест-полоски Ван Тач Селект Плюс"), items, nameOf = { it.name })
+        assertTrue("ожидали несколько кандидатов, получили ${best.size}", best.size >= 2)
+        // лидер — самое полное совпадение
+        assertEquals(2L, best.first().first.id)
+    }
+
     @Test
     fun bestMatchesNoGibberish() {
         val patients = listOf(Patient(id = 1, fio = "Иванов Иван Иванович", birthDate = 0, address = ""))

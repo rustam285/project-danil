@@ -14,12 +14,14 @@ import java.util.UUID
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
-/** Настройки приложения (п. 5.7 ТЗ). В копии не входят — только база и фото. */
+/** Настройки приложения (п. 5.7 ТЗ, Ф5 ТЗ 1.2.0). В копию входят только переносимые (Ф5.3). */
 data class AppSettings(
     val onboardingDone: Boolean = false,
     val notificationsEnabled: Boolean = true,
     /** Минуты от полуночи, по умолчанию 08:00 */
     val checkTimeMinutes: Int = 8 * 60,
+    /** Время напоминаний об анализах (Ф3.7/Ф5.1), по умолчанию 08:00 */
+    val analysisTimeMinutes: Int = 8 * 60,
     val drugThresholdDays: Int = 7,
     val rxThresholdDays: Int = 14,
     /** URI каталога копий (SAF, п. 9.1) */
@@ -40,6 +42,7 @@ class SettingsStore(private val context: Context) {
         val ONBOARDING = booleanPreferencesKey("onboarding_done")
         val NOTIF_ENABLED = booleanPreferencesKey("notif_enabled")
         val CHECK_TIME = intPreferencesKey("check_time")
+        val ANALYSIS_TIME = intPreferencesKey("analysis_time")
         val DRUG_THRESHOLD = intPreferencesKey("drug_threshold")
         val RX_THRESHOLD = intPreferencesKey("rx_threshold")
         val BACKUP_TREE = stringPreferencesKey("backup_tree")
@@ -56,6 +59,7 @@ class SettingsStore(private val context: Context) {
             onboardingDone = p[Keys.ONBOARDING] ?: false,
             notificationsEnabled = p[Keys.NOTIF_ENABLED] ?: true,
             checkTimeMinutes = p[Keys.CHECK_TIME] ?: 8 * 60,
+            analysisTimeMinutes = p[Keys.ANALYSIS_TIME] ?: 8 * 60,
             drugThresholdDays = p[Keys.DRUG_THRESHOLD] ?: 7,
             rxThresholdDays = p[Keys.RX_THRESHOLD] ?: 14,
             backupTreeUri = p[Keys.BACKUP_TREE] ?: "",
@@ -73,6 +77,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setOnboardingDone() = context.dataStore.edit { it[Keys.ONBOARDING] = true }
     suspend fun setNotificationsEnabled(v: Boolean) = context.dataStore.edit { it[Keys.NOTIF_ENABLED] = v }
     suspend fun setCheckTime(minutes: Int) = context.dataStore.edit { it[Keys.CHECK_TIME] = minutes }
+    suspend fun setAnalysisTime(minutes: Int) = context.dataStore.edit { it[Keys.ANALYSIS_TIME] = minutes }
     suspend fun setDrugThreshold(days: Int) = context.dataStore.edit { it[Keys.DRUG_THRESHOLD] = days }
     suspend fun setRxThreshold(days: Int) = context.dataStore.edit { it[Keys.RX_THRESHOLD] = days }
     suspend fun setBackupTree(uri: String) = context.dataStore.edit { it[Keys.BACKUP_TREE] = uri }

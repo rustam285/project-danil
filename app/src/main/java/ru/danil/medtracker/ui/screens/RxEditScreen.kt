@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,6 +68,8 @@ class RxEditViewModel(private val container: AppContainer) : ViewModel() {
     val existing = MutableStateFlow<Rx?>(null)
     val prescriptions = MutableStateFlow<List<ru.danil.medtracker.data.db.Prescription>>(emptyList())
     val drugs = MutableStateFlow<Map<Long, ru.danil.medtracker.data.db.Drug>>(emptyMap())
+    /** Ранее введённые врачи — подсказки для поля «Врач» (Ф4.3): из рецептов и карточек пациентов. */
+    val knownDoctors = MutableStateFlow<List<String>>(emptyList())
     val saved = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
     val ocrRunning = MutableStateFlow(false)
@@ -77,6 +80,10 @@ class RxEditViewModel(private val container: AppContainer) : ViewModel() {
             val ps = repo.prescriptionDao.allActive().filter { it.patientId == patientId }
             prescriptions.value = ps
             drugs.value = repo.drugDao.all().associateBy { d -> d.id }
+            knownDoctors.value = (
+                repo.rxDao.distinctDoctors() +
+                    repo.patientDao.all().mapNotNull { p -> p.doctor?.trim()?.takeIf { it.isNotEmpty() } }
+                ).distinct().sorted()
         }
     }
 
@@ -179,6 +186,7 @@ fun RxEditScreen(
     val existing by vm.existing.collectAsStateWithLifecycle()
     val prescriptions by vm.prescriptions.collectAsStateWithLifecycle()
     val drugs by vm.drugs.collectAsStateWithLifecycle()
+    val knownDoctors by vm.knownDoctors.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val ocrRunning by vm.ocrRunning.collectAsStateWithLifecycle()
@@ -305,6 +313,35 @@ fun RxEditScreen(
                 rx.number, { rx = rx.copy(number = it) },
                 label = { Text("Номер (например 25 222 011 880)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
+            // Врач (Ф4.3): только вручную — ввод нового или выбор из ранее введённых
+            OutlinedTextField(
+                value = rx.doctor ?: "",
+                onValueChange = { rx = rx.copy(doctor = it.trim().takeIf { s -> s.isNotEmpty() }) },
+                label = { Text("Врач (выписал рецепт)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val doctorInput = rx.doctor?.trim().orEmpty()
+            if (doctorInput.length >= 2) {
+                val hints = knownDoctors
+                    .filter { it.contains(doctorInput, ignoreCase = true) && !it.equals(doctorInput, ignoreCase = true) }
+                    .take(4)
+                if (hints.isNotEmpty()) {
+                    Column(Modifier.padding(top = 2.dp)) {
+                        hints.forEach { doc ->
+                            Text(
+                                doc,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { rx = rx.copy(doctor = doc) }
+                                    .padding(vertical = 6.dp),
+                            )
+                        }
+                    }
+                }
+            }
             DatePickerField(
                 "Дата выдачи рецепта",
                 rx.issueDate?.let { Dates.fromEpochDay(it) },

@@ -494,12 +494,14 @@ fun RxScanScreen(onIssue: (Long) -> Unit) {
                         )
                         state.prescriptions.forEach { p ->
                             val matched = (state.prescriptionScores[p.id] ?: 0) >= RxScanViewModel.DRUG_MATCH_MIN
+                            val drug = state.drugsById[p.drugId]
                             FilterChip(
                                 selected = state.prescriptionId == p.id,
                                 onClick = { vm.setPrescription(if (state.prescriptionId == p.id) null else p.id) },
                                 label = {
                                     Text(
-                                        (state.drugsById[p.drugId]?.name ?: "—") +
+                                        (drug?.name ?: "—") +
+                                            (if (drug?.isDevice == true) " (устройство)" else "") +
                                             if (matched) " • совпадает с рецептом" else "",
                                     )
                                 },

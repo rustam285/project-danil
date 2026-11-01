@@ -1,6 +1,7 @@
 package ru.danil.medtracker.data.db
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
@@ -40,6 +41,8 @@ data class Patient(
     val doctor: String? = null,
     val notes: String = "",
     val archived: Boolean = false,
+    /** Пометка «диабет» — вместе с МКБ E10/E11 включает пациента во вкладку «Анализы» (Ф3.6) */
+    val isDiabetic: Boolean = false,
     val createdAt: Long = 0,
     val updatedAt: Long = 0,
 ) {
@@ -53,11 +56,19 @@ data class Patient(
     }
 }
 
+/** Вид позиции справочника: препарат или устройство (Ф4.1). Хранится строкой. */
+object DrugKind {
+    const val DRUG = "DRUG"
+    const val DEVICE = "DEVICE"
+}
+
 @Entity(tableName = "drugs", indices = [Index("name")])
 @Serializable
 data class Drug(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
+    /** Препарат (по умолчанию) / Устройство — [DrugKind] (Ф4.1) */
+    val kind: String = DrugKind.DRUG,
     /** Лекарство / Расходник / Питание — свободный выбор (п. 3.2) */
     val category: String? = null,
     /** Упаковка / Флакон / Банка / Штука */
@@ -78,6 +89,8 @@ data class Drug(
     /** МЕ в штуке = концентрация × объём (п. 3.2), если оба заданы. */
     fun mePerPiece(): Int? =
         if (concMePerMl != null && volumeMl != null && concMePerMl > 0 && volumeMl > 0) concMePerMl * volumeMl else null
+
+    val isDevice: Boolean get() = kind == DrugKind.DEVICE
 }
 
 @Entity(tableName = "prescriptions", indices = [Index("patientId"), Index("drugId")])
@@ -91,6 +104,8 @@ data class Prescription(
     /** «В ожидании поступления»: препарат закончился, выдать нельзя — нет на складе.
      *  Снимается автоматически при любой выдаче по назначению (или вручную). */
     val awaitingRestock: Boolean = false,
+    /** Резервная схема лечения (Ф2): скрыто из «Срочного», без уведомлений; расчёт ведётся. */
+    val isReserve: Boolean = false,
     val createdAt: Long = 0,
     val updatedAt: Long = 0,
 )
@@ -153,6 +168,8 @@ data class Rx(
     val validUntil: Long? = null,
     /** ISSUED (выписан) / REDEEMED (отоварен); «истёк» вычисляется на лету (п. 3.5) */
     val status: String = "ISSUED",
+    /** Врач, выписавший рецепт (Ф4.3): только ручной ввод/выбор, OCR не используется. */
+    val doctor: String? = null,
     val ocrText: String? = null,
     /** JSON-список путей фото (относительно filesDir) */
     val photoPaths: String = "[]",
@@ -168,6 +185,52 @@ data class Rx(
             kotlinx.serialization.json.Json.encodeToString(ListSerializer(String.serializer()), list)
     }
 }
+
+/** Вид лабораторного анализа (Ф3.2). Встроенный HbA1c засевается при создании БД и миграции v2→v3. */
+@Entity(tableName = "analysis_types")
+@Serializable
+data class AnalysisType(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    /** единица измерения («%» у HbA1c), необязательно */
+    val unit: String? = null,
+    /** периодичность в месяцах, ≥ 1 */
+    val periodMonths: Int = 3,
+    /** встроенный вид (HbA1c): удалять нельзя, период править можно */
+    val isBuiltIn: Boolean = false,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+) {
+    companion object {
+        /** Встроенный вид из ТЗ 1.2.0 (Ф3.2): засевается при создании БД и миграции v2→v3. */
+        const val HBA1C_NAME = "Гликированный гемоглобин (HbA1c)"
+        const val HBA1C_PERIOD_MONTHS = 3
+        const val HBA1C_UNIT = "%"
+    }
+}
+
+/** Запись анализа (Ф3.3): пациент, вид, дата, значение, комментарий. */
+@Entity(
+    tableName = "analysis_records",
+    foreignKeys = [
+        ForeignKey(entity = Patient::class, parentColumns = ["id"], childColumns = ["patientId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = AnalysisType::class, parentColumns = ["id"], childColumns = ["typeId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("patientId"), Index("typeId")],
+)
+@Serializable
+data class AnalysisRecord(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val patientId: Long,
+    val typeId: Long,
+    /** epochDay сдачи */
+    val date: Long,
+    /** результат (например, HbA1c = 7.4) */
+    val value: Double,
+    val note: String? = null,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+)
 
 /** Удаления для быстрых копий (п. 9.8): id, тип, время удаления. */
 @Entity(tableName = "tombstones", indices = [Index("entityType", "entityId")])

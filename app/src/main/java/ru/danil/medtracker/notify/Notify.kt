@@ -22,7 +22,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import ru.danil.medtracker.App
 import ru.danil.medtracker.MainActivity
-import ru.danil.medtracker.calc.CalcService
 import ru.danil.medtracker.data.AppSettings
 import ru.danil.medtracker.util.Dates
 import java.time.LocalDate
@@ -100,47 +99,25 @@ class CheckWorker(context: Context, params: WorkerParameters) : Worker(context, 
     }
 }
 
-/** Сама проверка: одно сводное уведомление в день (п. 7.2, 7.3). */
+/** Сама проверка: одно сводное уведомление в день (п. 7.2, 7.3). Логика — в [DailyEvents]. */
 object DailyCheck {
 
     const val CHANNEL_ID = "medtracker_urgent"
 
-    data class Events(
-        val lowStock: List<String>,
-        val rxBelow: List<String>,
-    )
-
-    suspend fun compute(container: ru.danil.medtracker.data.AppContainer, today: LocalDate = Dates.today()): Events {
+    suspend fun compute(container: ru.danil.medtracker.data.AppContainer, today: LocalDate = Dates.today()): DailyEvents.Events {
         val repo = container.repo
         val settings = container.settings.current()
         return withContext(Dispatchers.Default) {
-            val patients = repo.patientDao.all().filter { !it.archived }.associateBy { it.id }
-            val drugs = repo.drugDao.all().associateBy { it.id }
-            val normsByP = repo.normDao.all().groupBy { it.prescriptionId }
-            val issuesByP = repo.issueDao.all().groupBy { it.prescriptionId }
-            val low = mutableListOf<String>()
-            val threshold = settings.drugThresholdDays
-            for (p in repo.prescriptionDao.allActive()) {
-                val patient = patients[p.patientId] ?: continue
-                val drug = drugs[p.drugId] ?: continue
-                val ns = normsByP[p.id].orEmpty()
-                if (CalcService.isNoCalc(ns, today)) continue
-                val supply = CalcService.supplyFor(issuesByP[p.id].orEmpty(), ns, drug)
-                val until = supply.coveredUntil() ?: continue
-                if (!until.isAfter(today.plusDays(threshold.toLong()))) {
-                    low.add("${patient.fio} — ${drug.name}, обеспечен до ${Dates.formatRu(until)}")
-                }
-            }
-            val rxThreshold = settings.rxThresholdDays
-            val rxLow = repo.rxDao.allIssued().mapNotNull { rx ->
-                val patient = patients[rx.patientId] ?: return@mapNotNull null
-                val until = CalcService.rxValidUntil(rx.issueDate, rx.validDays, rx.validUntil)
-                    ?: return@mapNotNull null
-                if (!until.isAfter(today.plusDays(rxThreshold.toLong()))) {
-                    "Пора выписать новый рецепт: ${patient.fio}"
-                } else null
-            }
-            Events(lowStock = low, rxBelow = rxLow)
+            DailyEvents.compute(
+                patients = repo.patientDao.all(),
+                prescriptions = repo.prescriptionDao.allActive(),
+                drugs = repo.drugDao.all(),
+                norms = repo.normDao.all(),
+                issues = repo.issueDao.all(),
+                rxs = repo.rxDao.allIssued(),
+                settings = settings,
+                today = today,
+            )
         }
     }
 

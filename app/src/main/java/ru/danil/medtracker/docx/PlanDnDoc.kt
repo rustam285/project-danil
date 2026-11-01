@@ -50,7 +50,9 @@ object PlanDnDoc {
         }
         views.forEachIndexed { idx, v ->
             val forms = CalcService.pieceNounForms(v.drug)
-            b.para("${idx + 1}. ${v.drug.name}, ${CalcService.drugForm(v.drug)}", bold = true, after = 40)
+            // резервные схемы включаются с пометкой «(резерв)» (Ф2.7 ТЗ 1.2.0)
+            val reserveMark = if (v.prescription.isReserve) " (резерв)" else ""
+            b.para("${idx + 1}. ${v.drug.name}$reserveMark, ${CalcService.drugForm(v.drug)}", bold = true, after = 40)
 
             // Нормы с периодами действия (п. 8.2.3)
             val normsDesc = v.norms.sortedBy { it.validFrom }.joinToString("; ") { n ->

@@ -64,6 +64,8 @@ class Repo(
     val rxDao = db.rxDao()
     val tombstoneDao = db.tombstoneDao()
     val coreDao = db.coreDao()
+    val analysisTypeDao = db.analysisTypeDao()
+    val analysisRecordDao = db.analysisRecordDao()
 
     fun now() = System.currentTimeMillis()
 
@@ -190,7 +192,13 @@ class Repo(
         val today = Dates.toEpochDay(Dates.today())
         val sources = prescriptionDao.all().filter { it.patientId == sourcePatientId && it.status == "ACTIVE" }
         for (src in sources) {
-            val newP = Prescription(patientId = targetPatientId, drugId = src.drugId, createdAt = t, updatedAt = t)
+            val newP = Prescription(
+                patientId = targetPatientId,
+                drugId = src.drugId,
+                isReserve = src.isReserve,
+                createdAt = t,
+                updatedAt = t,
+            )
             val newId = prescriptionDao.insert(newP)
             val norms = normDao.forPrescription(src.id)
             val copied = norms.map { n ->

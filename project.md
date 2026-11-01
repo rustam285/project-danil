@@ -39,9 +39,10 @@ app/src/main/java/ru/danil/medtracker/
 │   ├── SupplyEngine.kt            # ядро «обеспечен до» по Приложению Г ТЗ
 │   └── CalcService.kt             # мост Room→движок, форматирование норм, подсветка (Level)
 ├── data/
-│   ├── db/ (Entities.kt, Daos.kt, AppDatabase.kt)   # 7 таблиц, schemaVersion=2
+│   ├── db/ (Entities.kt, Daos.kt, AppDatabase.kt)   # 9 таблиц, schemaVersion=3; схемы в app/schemas (exportSchema=true)
 │   ├── Repo.kt                    # операции + UI-модели (PrescriptionView, PatientListItem, UrgentItem)
-│   ├── SettingsStore.kt           # DataStore: уведомления, пороги, каталог копий, lastFullId
+│   ├── UrgentList.kt              # чистая логика вкладки «Срочное» (резервные исключены, Ф2)
+│   ├── SettingsStore.kt           # DataStore: уведомления, пороги, время сводки/анализов, каталог копий, lastFullId
 │   └── AppContainer.kt            # ручной DI
 ├── ui/
 │   ├── CommonUi.kt                # DatePickerField (календарь), SupplyBadge, IntField, EmptyState
@@ -60,6 +61,7 @@ app/src/main/java/ru/danil/medtracker/
 │   └── PhotoStore.kt              # фото в filesDir/photos, сжатие ≤1600px/JPEG80, EXIF-поворот
 ├── notify/Notify.kt               # AlarmScheduler (exact), AlarmReceiver, BootReceiver, CheckWorker,
 │                                  #   DailyCheck: одно сводное InboxStyle-уведомление в день
+│   └── notify/DailyEvents.kt      # чистая логика сводки (резервные не уведомляются, Ф2)
 └── backup/
     ├── BackupData.kt              # схема manifest.json/db.json (kotlinx-serialization)
     └── BackupManager.kt           # полная/быстрая копии, SHA-256, tombstones, восстановление
@@ -99,6 +101,14 @@ app/src/main/java/ru/danil/medtracker/
 
 **Ждёт проверки на устройстве (нужен телефон заказчика):** импорт фото + OCR на новом телефоне после v1.1.1/v1.1.2 (должно заработать; если нет — взять текст ошибки из диалога: там теперь размер и заголовок файла), скан-поток «Рецепт», доставка уведомления 08:00 на Xiaomi/HyperOS (автозапуск), открытие .docx в Word/WPS.
 
+## 6a. v1.2.0 в работе (ТЗ: docs/ТЗ_1.2.0_1.3.0_доработки.md, блоки A/B/C с остановкой после каждого)
+
+**Блок A (сделан, ждёт подтверждения):** миграция v2→v3 единая неразрушающая (`prescriptions.isReserve`, `drugs.kind` DRUG/DEVICE, `rxs.doctor`, `patients.isDiabetic`, таблицы `analysis_types`/`analysis_records` с FK-каскадами, засев встроенного HbA1c — миграцией и `onCreate`; идемпотентный `AnalysisSeed`); бэкапы: новые сущности в полных/дельта-копиях, tombstones `analysis_type`/`analysis_record`, блок `settings` (переносимые: время сводки/анализов, пороги, вкл/выкл; НЕ входят каталог копий, lastFullId, служебные даты), чистая склейка в `BackupMerge` (merge + дедуп HbA1c), восстановление копий v1.1.2 работает (отсутствующее = дефолты), после восстановления — перепланирование будильника сводки; Ф2 резервные схемы: скрыты из «Срочного» (`UrgentList`) и сводки (`DailyEvents`), секция «Резервные препараты» в карточке с «В ожидании поступления», чипы «Резерв», «Сводная потребность» без резерва, «План ДН» с пометкой «(резерв)» (дефолт Ф2.7 подтверждён); Ф4: вид позиции препарат/устройство в справочнике и подборе, поле «Врач» в рецепте (ручной ввод + подсказки из рецептов и лечащих врачей, OCR врача нет); Ф5: Material 3 `TimePickerField` для времени сводки и анализов (время анализов хранится, будильник — в блоке B), FlowRow в настройках. Схемы Room: `exportSchema=true`, каталог `app/schemas` (2.json снят со старого кода до правок — аутентичный), androidTest-asset для `MigrationTestHelper`. Тесты: юнит 50 (было 35; +UrgentList, DailyEvents, ReserveDocs, BackupCompat, TextMatch-устройства), инструментальные: `MigrationTest` (миграция 2→3 с данными + fresh-засев) — зелёные на эмуляторе api35.
+
+**Блок B (следующий):** Ф3 анализы — вкладка, виды/записи, пометка «Диабет» в PatientEdit, логика сроков (`plusMonths`), второй будильник напоминаний (отдельный канал, request code, идемпотентность cancel→set), перепланирование при изменении времени/BOOT/восстановлении.
+
+**Блок C:** Ф1 скан-поток — полноэкранный просмотр фото с зумом и повторным OCR, автозаполнение всех полей, «Выдать» с датой рецепта, блокировка будущей даты.
+
 ## 7. Грабли, на которые уже наступали
 
 - **Tesseract4Android**: артефакт только на JitPack — `com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.7.0` (репозиторий в `settings.gradle.kts`), а классы живут в пакете **`com.googlecode.tesseract.android`**, не `cz.adaptech`.
@@ -115,6 +125,7 @@ app/src/main/java/ru/danil/medtracker/
 - **Tesseract4Android**: с 4.8.0 координаты Maven сменились — новые версии только как `cz.adaptech.tesseract4android:tesseract4android` (JitPack), старые `com.github.adaptech-cz.Tesseract4Android:*` кончаются (4.9.0 там нет). Классы по-прежнему в `com.googlecode.tesseract.android`.
 - **adb в Git Bash (Windows)**: MSYS конвертирует аргументы вида `/sdcard/...` в виндовые пути (`D:/Git/sdcard/...`) — `adb push` «успешно» кладёт файл непонятно куда. Всегда `export MSYS_NO_PATHCONV=1` перед командами с device-путями.
 - **Эмуляторы для проверки нативного кода**: `sdkmanager "system-images;android-35;google_apis;x86_64"` (обычный 4КБ) и `"system-images;android-35;google_apis_ps16k;x86_64"` (16КБ); эмулятор не поднимается без `-no-window -gpu swiftshader_indirect` на безмониторных сессиях. Инструментальные тесты: `./gradlew :app:connectedDebugAndroidTest` (AVD должен быть запущен).
+- **Room**: `MigrationTestHelper` требует схемы как assets androidTest (`sourceSets { androidTest.assets.srcDir("schemas") }`) и `room-testing`; колбэк `onCreate` срабатывает только у БД, построенной с этим колбэком (для теста «с нуля» — своя фабрика `buildForTest`, а не голый `Room.databaseBuilder`); у собранной БД `allowMainThreadQueries` — это свойство-Boolean, его нельзя вызвать как функцию (применяется на билдере до `build()`).
 
 ## 8. Как делать правки (порядок)
 
