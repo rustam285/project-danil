@@ -107,4 +107,63 @@ class RxScanFlowTest {
             scenario.close()
         }
     }
+
+    /** Создание назначения на месте (§12.9): препарат + обязательная норма, выбор нового, выдача по нему. */
+    @Test
+    fun createPrescriptionOnSpot_thenIssue() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            lateinit var app: App
+            scenario.onActivity { app = it.application as App }
+            val db = app.container.db
+
+            runBlocking {
+                val t = System.currentTimeMillis()
+                val pid = db.patientDao().insert(
+                    Patient(fio = "Тестова Анна Ивановна", birthDate = 6000, address = "г. Тест", createdAt = t, updatedAt = t),
+                )
+                val did = db.drugDao().insert(Drug(name = "Глюкометр Контур Плюс", piecesPerPack = 50, updatedAt = t))
+                val patient = db.patientDao().byId(pid)!!
+
+                val vm = RxScanViewModel(app.container)
+                val rxDate = LocalDate.of(2026, 10, 29)
+                vm.state.value = vm.state.value.copy(
+                    series = "11111",
+                    number = "99 888 777 666",
+                    issueDate = rxDate,
+                    units = 2,
+                    packSize = 50,
+                    patient = patient,
+                )
+                vm.selectPatient(patient)
+                withTimeout(10_000) { vm.state.first { it.drugsById.isNotEmpty() && it.prescriptions.isEmpty() } }
+
+                // назначений нет — создаём на месте: норма с validFrom = дата рецепта (§8)
+                val norm = NormDraft(
+                    validFrom = rxDate,
+                    kind = NormDraft.NormKind.PER_DAY,
+                    amount = 1,
+                )
+                vm.createPrescription(pid, db.drugDao().byId(did)!!, norm)
+                val created = withTimeout(10_000) { vm.state.first { it.prescriptionId != null } }
+                val newPid = created.prescriptionId!!
+                val norms = db.normDao().forPrescription(newPid)
+                assertEquals(1, norms.size)
+                assertEquals(Dates.toEpochDay(rxDate), norms.first().validFrom)
+
+                // выдача по новому назначению
+                vm.prepareIssue()
+                val confirm = withTimeout(10_000) { vm.state.first { it.confirm != null } }.confirm!!
+                assertEquals(100, confirm.plan.total)
+                assertTrue(confirm.plan.blocks.isEmpty())
+                vm.confirmIssue()
+                val issued = withTimeout(10_000) { vm.state.first { it.issued != null } }.issued!!
+                assertEquals(1, db.issueDao().forPrescription(newPid).size)
+                assertEquals("REDEEMED", db.rxDao().byId(issued.rxId)!!.status)
+                assertNotNull(issued.until)
+            }
+        } finally {
+            scenario.close()
+        }
+    }
 }
